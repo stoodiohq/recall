@@ -1,0 +1,4 @@
+# Recall merge strategy
+events/events.jsonl merge=union
+snapshots/*.md merge=ours
+manifest.json merge=ours
