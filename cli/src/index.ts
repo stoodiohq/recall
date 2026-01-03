@@ -7,7 +7,7 @@
  */
 
 import { Command } from 'commander';
-import { initCommand, saveCommand, statusCommand, syncCommand } from './commands/index.js';
+import { authCommand, initCommand, saveCommand, statusCommand, syncCommand } from './commands/index.js';
 
 const program = new Command();
 
@@ -15,6 +15,14 @@ program
   .name('recall')
   .description('Team memory for AI coding assistants')
   .version('0.1.0');
+
+program
+  .command('auth')
+  .description('Authenticate with GitHub')
+  .option('-t, --token <token>', 'Set token directly (skip browser)')
+  .option('--logout', 'Log out and clear stored credentials')
+  .option('--status', 'Show current authentication status')
+  .action(authCommand);
 
 program
   .command('init')

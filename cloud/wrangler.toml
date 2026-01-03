@@ -2,19 +2,18 @@ name = "recall-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 [vars]
-ENVIRONMENT = "development"
+ENVIRONMENT = "production"
 
-# D1 Database (uncomment when ready)
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "recall-db"
-# database_id = "xxx"
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "recall-db"
+database_id = "eae65f18-e27e-4d71-b94f-80142841688a"
 
-# Rate limiting
-# [[unsafe.bindings]]
-# name = "RATE_LIMITER"
-# type = "ratelimit"
-# namespace_id = "recall"
-# simple = { limit = 100, period = 60 }
+# Secrets (set via `wrangler secret put`):
+# - GITHUB_CLIENT_ID
+# - GITHUB_CLIENT_SECRET
+# - JWT_SECRET
