@@ -632,6 +632,137 @@ app.post('/license/activate', async (c) => {
 });
 
 // ============================================================
+// Team/Checkout endpoints (mock - no real payments yet)
+// ============================================================
+
+const TIER_CONFIG: Record<string, { seats: number; price: number }> = {
+  starter: { seats: 5, price: 49 },
+  team: { seats: 20, price: 149 },
+  business: { seats: 50, price: 399 },
+  enterprise: { seats: 100, price: 0 }, // Custom pricing
+};
+
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50);
+}
+
+// Create team (mock checkout)
+app.post('/teams', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json<{ name?: string; tier?: string }>();
+
+  if (!body.name || !body.tier) {
+    return c.json({ error: 'Missing name or tier' }, 400);
+  }
+
+  const tierConfig = TIER_CONFIG[body.tier];
+  if (!tierConfig) {
+    return c.json({ error: 'Invalid tier' }, 400);
+  }
+
+  // Check if user already has a team
+  const existingTeam = await c.env.DB.prepare(`
+    SELECT t.* FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first();
+
+  if (existingTeam) {
+    return c.json({ error: 'User already has a team' }, 400);
+  }
+
+  // Generate unique slug
+  let baseSlug = generateSlug(body.name);
+  let slug = baseSlug;
+  let attempt = 0;
+
+  while (true) {
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM teams WHERE slug = ?'
+    ).bind(slug).first();
+
+    if (!existing) break;
+
+    attempt++;
+    slug = `${baseSlug}-${attempt}`;
+  }
+
+  const teamId = generateId();
+  const now = new Date().toISOString();
+
+  // Create team
+  await c.env.DB.prepare(`
+    INSERT INTO teams (id, name, slug, owner_id, tier, seats, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(teamId, body.name, slug, user.id, body.tier, tierConfig.seats, now, now).run();
+
+  // Add user as owner
+  await c.env.DB.prepare(`
+    INSERT INTO team_members (team_id, user_id, role, joined_at)
+    VALUES (?, ?, 'owner', ?)
+  `).bind(teamId, user.id, now).run();
+
+  return c.json({
+    id: teamId,
+    name: body.name,
+    slug,
+    tier: body.tier,
+    seats: tierConfig.seats,
+    role: 'owner',
+  });
+});
+
+// Get current user's team
+app.get('/teams/me', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const team = await c.env.DB.prepare(`
+    SELECT t.*, tm.role
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<Team & { role: string }>();
+
+  if (!team) {
+    return c.json({ team: null });
+  }
+
+  // Get team members
+  const membersResult = await c.env.DB.prepare(`
+    SELECT u.id, u.email, u.name, u.avatar_url, u.github_username, tm.role, tm.joined_at
+    FROM users u
+    JOIN team_members tm ON tm.user_id = u.id
+    WHERE tm.team_id = ?
+    ORDER BY tm.joined_at
+  `).bind(team.id).all();
+
+  return c.json({
+    team: {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      tier: team.tier,
+      seats: team.seats,
+      role: team.role,
+      members: membersResult.results || [],
+    },
+  });
+});
+
+// ============================================================
 // Summarization endpoint
 // ============================================================
 

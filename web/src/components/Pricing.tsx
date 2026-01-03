@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 
 const plans = [
   {
+    id: 'starter',
     name: 'Starter',
     price: '$49',
     period: '/mo',
@@ -14,6 +15,7 @@ const plans = [
     highlighted: false,
   },
   {
+    id: 'team',
     name: 'Team',
     price: '$149',
     period: '/mo',
@@ -24,6 +26,7 @@ const plans = [
     badge: 'Most Popular',
   },
   {
+    id: 'business',
     name: 'Business',
     price: '$399',
     period: '/mo',
@@ -98,7 +101,7 @@ export function Pricing() {
               </ul>
 
               <a
-                href="/signup"
+                href={`/checkout?plan=${plan.id}`}
                 className={clsx(
                   'block text-center py-3 rounded-sm font-semibold transition-all',
                   plan.highlighted
