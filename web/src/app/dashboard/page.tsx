@@ -365,7 +365,7 @@ function IntegrateStep({
     if (toolId === 'claude-code') {
       return `"recall": {
   "command": "npx",
-  "args": ["-y", "@anthropic-ai/recall-mcp"],
+  "args": ["-y", "recall-mcp-server@latest"],
   "env": {
     "RECALL_API_TOKEN": "${tokenPlaceholder}"
   }
@@ -376,7 +376,7 @@ function IntegrateStep({
   "mcpServers": {
     "recall": {
       "command": "npx",
-      "args": ["-y", "@anthropic-ai/recall-mcp"],
+      "args": ["-y", "recall-mcp-server@latest"],
       "env": {
         "RECALL_API_TOKEN": "${tokenPlaceholder}"
       }

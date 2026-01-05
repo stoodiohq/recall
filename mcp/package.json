@@ -1,5 +1,5 @@
 {
-  "name": "@recall/mcp-server",
+  "name": "recall-mcp-server",
   "version": "0.1.0",
   "description": "Recall MCP server - Team memory for AI coding tools",
   "type": "module",
