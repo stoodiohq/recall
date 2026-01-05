@@ -10,6 +10,12 @@ export interface User {
   name: string | null;
   avatarUrl: string | null;
   githubUsername: string;
+  onboardingCompleted: boolean;
+  profile: {
+    role: string | null;
+    company: string | null;
+    teamSize: string | null;
+  };
   team: {
     id: string;
     name: string;

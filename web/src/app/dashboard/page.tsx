@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/AuthContext';
-import { getToken, getGitHubAuthUrl } from '@/lib/auth';
+import { getToken } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://recall-api.stoodiohq.workers.dev';
 
@@ -16,17 +16,45 @@ interface LicenseStatus {
   message?: string;
 }
 
-export default function DashboardPage() {
+interface EnabledRepo {
+  id: string;
+  githubRepoId: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  description: string | null;
+  language: string | null;
+  enabled: boolean;
+  enabledAt: string;
+  lastSyncAt: string | null;
+  initializedAt: string | null;
+}
+
+function DashboardContent() {
   const router = useRouter();
-  const { user, loading, logout } = useAuth();
+  const searchParams = useSearchParams();
+  const { user, loading, logout, login } = useAuth();
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [licenseLoading, setLicenseLoading] = useState(true);
+  const [repos, setRepos] = useState<EnabledRepo[]>([]);
+  const [reposLoading, setReposLoading] = useState(true);
+
+  // Handle token from URL (after OAuth redirect for returning users)
+  useEffect(() => {
+    const token = searchParams.get('token');
+    if (token) {
+      login(token).then(() => {
+        // Remove token from URL without triggering navigation
+        window.history.replaceState({}, '', '/dashboard');
+      });
+    }
+  }, [searchParams, login]);
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && !user && !searchParams.get('token')) {
       router.push('/');
     }
-  }, [loading, user, router]);
+  }, [loading, user, router, searchParams]);
 
   useEffect(() => {
     const fetchLicense = async () => {
@@ -54,6 +82,96 @@ export default function DashboardPage() {
     }
   }, [user]);
 
+  useEffect(() => {
+    const fetchRepos = async () => {
+      const token = getToken();
+      if (!token) return;
+
+      try {
+        const response = await fetch(`${API_URL}/repos`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setRepos(data.repos || []);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setReposLoading(false);
+      }
+    };
+
+    if (user) {
+      fetchRepos();
+    }
+  }, [user]);
+
+  const [initializingRepos, setInitializingRepos] = useState<Set<string>>(new Set());
+
+  const handleDisconnectRepo = async (repoId: string) => {
+    const token = getToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/repos/${repoId}/toggle`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        // Remove from local state
+        setRepos(repos.filter(r => r.id !== repoId));
+      }
+    } catch (error) {
+      console.error('Failed to disconnect repo:', error);
+    }
+  };
+
+  const handleInitializeRepo = async (repoId: string) => {
+    const token = getToken();
+    if (!token) return;
+
+    setInitializingRepos(prev => new Set(prev).add(repoId));
+
+    try {
+      const response = await fetch(`${API_URL}/repos/${repoId}/initialize`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Update repo in local state
+        setRepos(repos.map(r =>
+          r.id === repoId
+            ? { ...r, initializedAt: new Date().toISOString() }
+            : r
+        ));
+        console.log('Repo initialized:', data);
+      } else {
+        const error = await response.json();
+        console.error('Failed to initialize repo:', error);
+        alert(`Failed to initialize: ${error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to initialize repo:', error);
+      alert('Failed to initialize repository. Please try again.');
+    } finally {
+      setInitializingRepos(prev => {
+        const next = new Set(prev);
+        next.delete(repoId);
+        return next;
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-bg-base flex items-center justify-center">
@@ -67,10 +185,12 @@ export default function DashboardPage() {
   }
 
   const tierColors: Record<string, string> = {
+    free: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+    team: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+    enterprise: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    // Legacy tiers for backwards compatibility
     starter: 'bg-green-500/20 text-green-400 border-green-500/30',
-    team: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     business: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    enterprise: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   };
 
   return (
@@ -166,55 +286,178 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Team Card */}
+          {/* Team & Profile Card */}
           <div className="bg-bg-elevated border border-border-subtle rounded-lg p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Team</h2>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Team & Profile</h2>
             {user.team ? (
-              <div className="space-y-3">
-                <p className="text-text-primary font-medium">{user.team.name}</p>
-                <p className="text-text-secondary text-sm">
-                  Role: {user.team.role.charAt(0).toUpperCase() + user.team.role.slice(1)}
-                </p>
-                <p className="text-text-tertiary text-sm">
-                  {user.team.seats} seat{user.team.seats !== 1 ? 's' : ''} on {user.team.tier} plan
-                </p>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-text-primary font-semibold text-lg">{user.team.name}</p>
+                  <p className="text-text-tertiary text-sm">
+                    {user.team.tier.charAt(0).toUpperCase() + user.team.tier.slice(1)} plan
+                  </p>
+                </div>
+                <div className="border-t border-border-subtle pt-4 space-y-2">
+                  {user.profile?.role && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-tertiary">Your Role</span>
+                      <span className="text-text-secondary">{user.profile.role}</span>
+                    </div>
+                  )}
+                  {user.profile?.company && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-tertiary">Company</span>
+                      <span className="text-text-secondary">{user.profile.company}</span>
+                    </div>
+                  )}
+                  {user.profile?.teamSize && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-tertiary">Team Size</span>
+                      <span className="text-text-secondary">{user.profile.teamSize} developers</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm">
+                    <span className="text-text-tertiary">Your Team Role</span>
+                    <span className="text-text-secondary">{user.team.role.charAt(0).toUpperCase() + user.team.role.slice(1)}</span>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
                 <p className="text-text-secondary">No team yet</p>
-                <button className="text-accent-primary hover:underline text-sm">
-                  Create a team
-                </button>
+                <a
+                  href="/onboarding"
+                  className="inline-block text-accent-primary hover:underline text-sm"
+                >
+                  Complete setup
+                </a>
               </div>
             )}
           </div>
 
-          {/* Quick Start Card */}
+          {/* MCP Integration Status Card */}
           <div className="bg-bg-elevated border border-border-subtle rounded-lg p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Quick Start</h2>
-            <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">AI Tool Integration</h2>
+            <div className="flex items-start gap-3 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
+              <svg className="w-5 h-5 text-cyan-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               <div>
-                <p className="text-text-secondary text-sm mb-2">1. Install the CLI</p>
-                <code className="block bg-bg-base border border-border-subtle rounded px-3 py-2 text-sm font-mono text-text-primary">
-                  npm install -g recall-cli
-                </code>
-              </div>
-              <div>
-                <p className="text-text-secondary text-sm mb-2">2. Authenticate</p>
-                <code className="block bg-bg-base border border-border-subtle rounded px-3 py-2 text-sm font-mono text-text-primary">
-                  recall auth
-                </code>
-              </div>
-              <div>
-                <p className="text-text-secondary text-sm mb-2">3. Initialize in your repo</p>
-                <code className="block bg-bg-base border border-border-subtle rounded px-3 py-2 text-sm font-mono text-text-primary">
-                  cd your-project && recall init
-                </code>
+                <p className="text-cyan-400 font-medium text-sm">Coming Soon</p>
+                <p className="text-text-secondary text-sm mt-1">
+                  MCP server integration for Claude Code, Cursor, and Windsurf is in development.
+                  You&apos;ll get an email when it&apos;s ready.
+                </p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Connected Repositories */}
+        <div className="mt-8 bg-bg-elevated border border-border-subtle rounded-lg p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-semibold text-text-primary">Connected Repositories</h2>
+            <a
+              href="/dashboard/repos"
+              className="text-sm text-accent-primary hover:underline"
+            >
+              + Manage repos
+            </a>
+          </div>
+
+          {reposLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-6 h-6 border-2 border-text-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : repos.length === 0 ? (
+            <div className="text-center py-8">
+              <svg className="w-12 h-12 mx-auto text-text-tertiary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              <p className="text-text-secondary mb-4">No repositories connected yet</p>
+              <a
+                href="/dashboard/repos"
+                className="inline-block bg-text-primary text-bg-base px-4 py-2 rounded-sm font-medium hover:translate-y-[-1px] hover:shadow-lg transition-all"
+              >
+                Connect Repositories
+              </a>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {repos.map((repo) => (
+                <div
+                  key={repo.id}
+                  className="flex items-center justify-between p-4 bg-bg-base border border-border-subtle rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <svg className="w-5 h-5 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <div>
+                      <p className="text-text-primary font-medium">{repo.fullName}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        {repo.private && (
+                          <span className="flex items-center gap-1 text-xs text-text-tertiary">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                            Private
+                          </span>
+                        )}
+                        {repo.language && (
+                          <span className="text-xs text-text-tertiary">{repo.language}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {repo.initializedAt ? (
+                      <span className="flex items-center gap-2 text-sm text-green-400">
+                        <span className="w-2 h-2 bg-green-400 rounded-full" />
+                        Active
+                      </span>
+                    ) : initializingRepos.has(repo.id) ? (
+                      <span className="flex items-center gap-2 text-sm text-cyan-400">
+                        <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                        Initializing...
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleInitializeRepo(repo.id)}
+                        className="flex items-center gap-2 text-sm text-yellow-400 hover:text-yellow-300 transition-colors"
+                      >
+                        <span className="w-2 h-2 bg-yellow-400 rounded-full" />
+                        Initialize
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDisconnectRepo(repo.id)}
+                      className="text-text-tertiary hover:text-red-400 transition-colors p-1"
+                      title="Disconnect repository"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </main>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-bg-base flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-text-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }

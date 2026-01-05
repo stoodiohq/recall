@@ -5,34 +5,55 @@ import { clsx } from 'clsx';
 
 const plans = [
   {
-    id: 'starter',
-    name: 'Starter',
-    price: '$49',
-    period: '/mo',
-    description: 'For small teams getting started.',
-    features: ['Up to 5 developers', 'Unlimited repos', 'Full context capture', 'AI-powered summaries'],
+    id: 'free',
+    name: 'Free',
+    price: '$0',
+    period: '',
+    description: 'For solo developers trying it out.',
+    features: [
+      '1 developer',
+      '1 repository',
+      '30 days history',
+      'AI-powered summaries',
+      'Works with any AI tool',
+    ],
     cta: 'Get Started',
     highlighted: false,
   },
   {
     id: 'team',
     name: 'Team',
-    price: '$149',
-    period: '/mo',
-    description: 'For growing engineering teams.',
-    features: ['Up to 20 developers', 'Unlimited repos', 'Full features', 'Analytics dashboard'],
-    cta: 'Get Started',
+    price: '$12',
+    period: '/seat/mo',
+    description: 'For dev teams who ship together.',
+    features: [
+      'Unlimited developers',
+      'Unlimited repos',
+      '1 year history',
+      'Team analytics',
+      'Encrypted sharing',
+      'Priority support',
+    ],
+    cta: 'Start Free Trial',
     highlighted: true,
     badge: 'Most Popular',
+    annual: '$10/seat billed annually',
   },
   {
-    id: 'business',
-    name: 'Business',
-    price: '$399',
-    period: '/mo',
-    description: 'For larger organizations.',
-    features: ['Up to 50 developers', 'Unlimited repos', 'SSO integration', 'Priority support'],
-    cta: 'Get Started',
+    id: 'enterprise',
+    name: 'Enterprise',
+    price: 'Custom',
+    period: '',
+    description: 'For orgs with compliance needs.',
+    features: [
+      'Everything in Team',
+      'Unlimited history',
+      'SSO / SAML',
+      'BYOK (your own LLM)',
+      'SLA & dedicated support',
+      'On-prem available',
+    ],
+    cta: "Let's Talk",
     highlighted: false,
   },
 ];
@@ -83,10 +104,13 @@ export function Pricing() {
               )}
 
               <h3 className="text-h3 text-text-primary mb-2">{plan.name}</h3>
-              <div className="mb-4">
+              <div className="mb-2">
                 <span className="text-4xl font-bold text-text-primary">{plan.price}</span>
                 <span className="text-text-muted">{plan.period}</span>
               </div>
+              {plan.annual && (
+                <p className="text-sm text-accent mb-4">{plan.annual}</p>
+              )}
               <p className="text-body text-text-secondary mb-6">{plan.description}</p>
 
               <ul className="space-y-3 mb-8 flex-grow">

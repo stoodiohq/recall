@@ -48,7 +48,7 @@ interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   JWT_SECRET: string;
-  ANTHROPIC_API_KEY?: string;
+  GEMINI_API_KEY?: string;
 }
 
 interface RecallEvent {
@@ -82,6 +82,11 @@ interface User {
   avatar_url: string | null;
   github_id: string;
   github_username: string;
+  github_access_token: string | null;
+  role: string | null;
+  company: string | null;
+  team_size: string | null;
+  onboarding_completed: number;
   created_at: string;
   updated_at: string;
 }
@@ -268,7 +273,8 @@ app.get('/auth/github', (c) => {
     : 'http://localhost:8787/auth/github/callback';
 
   const state = crypto.randomUUID();
-  const scope = 'read:user user:email';
+  // Request repo scope to access user's repositories
+  const scope = 'read:user user:email repo';
 
   const authUrl = new URL('https://github.com/login/oauth/authorize');
   authUrl.searchParams.set('client_id', clientId);
@@ -356,8 +362,8 @@ app.get('/auth/github/callback', async (c) => {
       // Create new user
       const userId = generateId();
       await c.env.DB.prepare(`
-        INSERT INTO users (id, email, name, avatar_url, github_id, github_username, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (id, email, name, avatar_url, github_id, github_username, github_access_token, onboarding_completed, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
       `).bind(
         userId,
         email,
@@ -365,6 +371,7 @@ app.get('/auth/github/callback', async (c) => {
         githubUser.avatar_url,
         String(githubUser.id),
         githubUser.login,
+        accessToken,
         now,
         now
       ).run();
@@ -376,19 +383,25 @@ app.get('/auth/github/callback', async (c) => {
         avatar_url: githubUser.avatar_url,
         github_id: String(githubUser.id),
         github_username: githubUser.login,
+        github_access_token: accessToken,
+        role: null,
+        company: null,
+        team_size: null,
+        onboarding_completed: 0,
         created_at: now,
         updated_at: now,
       };
     } else {
-      // Update user info
+      // Update user info and token
       await c.env.DB.prepare(`
-        UPDATE users SET email = ?, name = ?, avatar_url = ?, github_username = ?, updated_at = ?
+        UPDATE users SET email = ?, name = ?, avatar_url = ?, github_username = ?, github_access_token = ?, updated_at = ?
         WHERE id = ?
       `).bind(
         email,
         githubUser.name,
         githubUser.avatar_url,
         githubUser.login,
+        accessToken,
         now,
         user.id
       ).run();
@@ -430,7 +443,10 @@ app.get('/auth/github/callback', async (c) => {
 
     // Web auth: redirect with token in URL (for SPA to handle)
     const redirectUrl = new URL(c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003');
-    redirectUrl.pathname = '/auth/callback';
+
+    // Check if user needs onboarding
+    const needsOnboarding = !user.onboarding_completed;
+    redirectUrl.pathname = needsOnboarding ? '/onboarding' : '/dashboard';
     redirectUrl.searchParams.set('token', sessionToken);
 
     return c.redirect(redirectUrl.toString());
@@ -466,6 +482,12 @@ app.get('/auth/me', async (c) => {
     name: user.name,
     avatarUrl: user.avatar_url,
     githubUsername: user.github_username,
+    onboardingCompleted: !!user.onboarding_completed,
+    profile: {
+      role: user.role,
+      company: user.company,
+      teamSize: user.team_size,
+    },
     team: membership ? {
       id: membership.id,
       name: membership.name,
@@ -476,6 +498,809 @@ app.get('/auth/me', async (c) => {
     } : null,
   });
 });
+
+// ============================================================
+// GitHub Repo endpoints
+// ============================================================
+
+interface GitHubRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  private: boolean;
+  description: string | null;
+  html_url: string;
+  language: string | null;
+  stargazers_count: number;
+  updated_at: string;
+  pushed_at: string;
+}
+
+// Get user's GitHub repos
+app.get('/github/repos', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  if (!user.github_access_token) {
+    return c.json({ error: 'GitHub token not available. Please re-authenticate.' }, 400);
+  }
+
+  try {
+    // Fetch user's repos from GitHub
+    const reposResponse = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated&type=all', {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (!reposResponse.ok) {
+      if (reposResponse.status === 401) {
+        return c.json({ error: 'GitHub token expired. Please re-authenticate.' }, 401);
+      }
+      throw new Error(`GitHub API error: ${reposResponse.status}`);
+    }
+
+    const repos = await reposResponse.json() as GitHubRepo[];
+
+    // Return simplified repo list
+    return c.json({
+      repos: repos.map(r => ({
+        id: r.id,
+        name: r.name,
+        fullName: r.full_name,
+        private: r.private,
+        description: r.description,
+        url: r.html_url,
+        language: r.language,
+        stars: r.stargazers_count,
+        updatedAt: r.updated_at,
+        pushedAt: r.pushed_at,
+      })),
+    });
+  } catch (error) {
+    console.error('Failed to fetch GitHub repos:', error);
+    return c.json({ error: 'Failed to fetch repositories' }, 500);
+  }
+});
+
+// ============================================================
+// Onboarding endpoints
+// ============================================================
+
+interface SelectedRepo {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  description: string | null;
+  language: string | null;
+}
+
+interface OnboardingData {
+  role: string;
+  company: string;
+  teamSize: string;
+  teamName: string;
+  plan: 'team' | 'enterprise';
+  seats: number;
+  selectedRepos: SelectedRepo[];
+}
+
+// Complete onboarding
+app.post('/onboarding/complete', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json<OnboardingData>();
+
+  if (!body.role || !body.company || !body.teamSize || !body.teamName || !body.plan) {
+    return c.json({ error: 'Missing required fields' }, 400);
+  }
+
+  const now = new Date().toISOString();
+
+  // Update user profile
+  await c.env.DB.prepare(`
+    UPDATE users SET role = ?, company = ?, team_size = ?, onboarding_completed = 1, updated_at = ?
+    WHERE id = ?
+  `).bind(body.role, body.company, body.teamSize, now, user.id).run();
+
+  // Check if user already has a team
+  const existingTeam = await c.env.DB.prepare(`
+    SELECT t.* FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<Team>();
+
+  let team: Team | null = existingTeam || null;
+
+  if (!existingTeam) {
+    // Create team
+    const teamId = generateId();
+    const keyId = generateId();
+
+    // Generate unique slug
+    let baseSlug = generateSlug(body.teamName);
+    let slug = baseSlug;
+    let attempt = 0;
+
+    while (true) {
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM teams WHERE slug = ?'
+      ).bind(slug).first();
+
+      if (!existing) break;
+
+      attempt++;
+      slug = `${baseSlug}-${attempt}`;
+    }
+
+    // Determine seats based on plan
+    const seats = body.seats || (body.plan === 'team' ? 10 : 50);
+
+    // Generate team encryption key
+    const encryptionKey = await generateEncryptionKey();
+
+    // Create team with encryption key in a batch
+    await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT INTO teams (id, name, slug, owner_id, tier, seats, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(teamId, body.teamName, slug, user.id, body.plan, seats, now, now),
+
+      c.env.DB.prepare(`
+        INSERT INTO team_members (team_id, user_id, role, joined_at)
+        VALUES (?, ?, 'owner', ?)
+      `).bind(teamId, user.id, now),
+
+      c.env.DB.prepare(`
+        INSERT INTO team_keys (id, team_id, encryption_key, key_version, created_at)
+        VALUES (?, ?, ?, 1, ?)
+      `).bind(keyId, teamId, encryptionKey, now),
+    ]);
+
+    team = {
+      id: teamId,
+      name: body.teamName,
+      slug,
+      owner_id: user.id,
+      tier: body.plan,
+      seats,
+      created_at: now,
+    };
+  }
+
+  // Enable selected repos for tracking
+  const enabledRepos: { id: string; fullName: string }[] = [];
+
+  if (team && body.selectedRepos && body.selectedRepos.length > 0) {
+    for (const repo of body.selectedRepos) {
+      const repoId = generateId();
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO repos (id, team_id, github_repo_id, name, full_name, private, description, language, enabled_by, enabled_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          repoId,
+          team.id,
+          repo.id,
+          repo.name,
+          repo.fullName,
+          repo.private ? 1 : 0,
+          repo.description,
+          repo.language,
+          user.id,
+          now
+        ).run();
+
+        enabledRepos.push({ id: repoId, fullName: repo.fullName });
+      } catch (err) {
+        // Repo might already exist, skip
+        console.error('Failed to insert repo:', repo.fullName, err);
+      }
+    }
+  }
+
+  return c.json({
+    success: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: body.role,
+      company: body.company,
+    },
+    team: team ? {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      tier: team.tier,
+      seats: team.seats,
+    } : null,
+    enabledRepos,
+    reposCount: enabledRepos.length,
+    message: `Recall enabled on ${enabledRepos.length} repo${enabledRepos.length !== 1 ? 's' : ''}!`,
+  });
+});
+
+// Get onboarding status
+app.get('/onboarding/status', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Check if user has completed onboarding
+  const hasTeam = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first();
+
+  return c.json({
+    completed: !!user.onboarding_completed,
+    hasTeam: !!hasTeam,
+    profile: {
+      role: user.role,
+      company: user.company,
+      teamSize: user.team_size,
+    },
+  });
+});
+
+// Get enabled repos for current user's team
+app.get('/repos', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<{ id: string }>();
+
+  if (!membership) {
+    return c.json({ repos: [] });
+  }
+
+  // Get enabled repos
+  const result = await c.env.DB.prepare(`
+    SELECT id, github_repo_id, name, full_name, private, description, language, enabled, enabled_at, last_sync_at, initialized_at
+    FROM repos
+    WHERE team_id = ? AND enabled = 1
+    ORDER BY enabled_at DESC
+  `).bind(membership.id).all();
+
+  return c.json({
+    repos: (result.results || []).map((r: Record<string, unknown>) => ({
+      id: r.id,
+      githubRepoId: r.github_repo_id,
+      name: r.name,
+      fullName: r.full_name,
+      private: !!r.private,
+      description: r.description,
+      language: r.language,
+      enabled: !!r.enabled,
+      enabledAt: r.enabled_at,
+      lastSyncAt: r.last_sync_at,
+      initializedAt: r.initialized_at,
+    })),
+  });
+});
+
+// Add a new repo
+app.post('/repos', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<{ id: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'No team found' }, 404);
+  }
+
+  const body = await c.req.json<{
+    githubRepoId: number;
+    name: string;
+    fullName: string;
+    private: boolean;
+    description: string | null;
+    language: string | null;
+  }>();
+
+  if (!body.githubRepoId || !body.name || !body.fullName) {
+    return c.json({ error: 'Missing required fields' }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const repoId = generateId();
+
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO repos (id, team_id, github_repo_id, name, full_name, private, description, language, enabled_by, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      repoId,
+      membership.id,
+      body.githubRepoId,
+      body.name,
+      body.fullName,
+      body.private ? 1 : 0,
+      body.description,
+      body.language,
+      user.id,
+      now
+    ).run();
+
+    return c.json({
+      id: repoId,
+      githubRepoId: body.githubRepoId,
+      name: body.name,
+      fullName: body.fullName,
+      private: body.private,
+      enabled: true,
+    });
+  } catch (err) {
+    // Repo might already exist
+    console.error('Failed to add repo:', err);
+    return c.json({ error: 'Failed to add repository. It may already exist.' }, 400);
+  }
+});
+
+// Toggle repo enabled status
+app.post('/repos/:repoId/toggle', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const repoId = c.req.param('repoId');
+
+  // Get user's team
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<{ id: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'No team found' }, 404);
+  }
+
+  // Toggle the repo
+  const repo = await c.env.DB.prepare(`
+    SELECT id, enabled FROM repos WHERE id = ? AND team_id = ?
+  `).bind(repoId, membership.id).first<{ id: string; enabled: number }>();
+
+  if (!repo) {
+    return c.json({ error: 'Repo not found' }, 404);
+  }
+
+  const newEnabled = repo.enabled ? 0 : 1;
+  await c.env.DB.prepare(`
+    UPDATE repos SET enabled = ? WHERE id = ?
+  `).bind(newEnabled, repoId).run();
+
+  return c.json({
+    id: repoId,
+    enabled: !!newEnabled,
+  });
+});
+
+// Initialize repo with .recall directory
+app.post('/repos/:repoId/initialize', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  if (!user.github_access_token) {
+    return c.json({ error: 'GitHub token not available. Please re-authenticate.' }, 400);
+  }
+
+  const repoId = c.req.param('repoId');
+
+  // Get user's team
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<{ id: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'No team found' }, 404);
+  }
+
+  // Get repo info
+  const repo = await c.env.DB.prepare(`
+    SELECT * FROM repos WHERE id = ? AND team_id = ?
+  `).bind(repoId, membership.id).first<{
+    id: string;
+    full_name: string;
+    name: string;
+    description: string | null;
+    language: string | null;
+    initialized_at: string | null;
+  }>();
+
+  if (!repo) {
+    return c.json({ error: 'Repo not found' }, 404);
+  }
+
+  // Get encryption key
+  const teamKey = await c.env.DB.prepare(`
+    SELECT encryption_key, key_version FROM team_keys WHERE team_id = ?
+  `).bind(membership.id).first<{ encryption_key: string; key_version: number }>();
+
+  if (!teamKey) {
+    return c.json({ error: 'Team encryption key not found' }, 500);
+  }
+
+  try {
+    // 1. Get repo default branch
+    const repoResponse = await fetch(`https://api.github.com/repos/${repo.full_name}`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (!repoResponse.ok) {
+      throw new Error(`GitHub API error: ${repoResponse.status}`);
+    }
+
+    const repoData = await repoResponse.json() as { default_branch: string };
+    const defaultBranch = repoData.default_branch;
+
+    // 2. Get repo tree to analyze structure
+    const treeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/trees/${defaultBranch}?recursive=1`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+
+    let repoStructure = '';
+    if (treeResponse.ok) {
+      const treeData = await treeResponse.json() as { tree: Array<{ path: string; type: string }> };
+      // Get key files only (limit to prevent token overflow)
+      const keyFiles = treeData.tree
+        .filter(f => f.type === 'blob')
+        .filter(f =>
+          f.path.endsWith('.json') ||
+          f.path.endsWith('.ts') ||
+          f.path.endsWith('.tsx') ||
+          f.path.endsWith('.js') ||
+          f.path.endsWith('.jsx') ||
+          f.path.endsWith('.py') ||
+          f.path.endsWith('.go') ||
+          f.path.endsWith('.rs') ||
+          f.path.endsWith('.md') ||
+          f.path === 'Dockerfile' ||
+          f.path.includes('config')
+        )
+        .slice(0, 100)
+        .map(f => f.path);
+      repoStructure = keyFiles.join('\n');
+    }
+
+    // 3. Try to read README for context
+    let readmeContent = '';
+    const readmeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/readme`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3.raw',
+      },
+    });
+    if (readmeResponse.ok) {
+      readmeContent = await readmeResponse.text();
+      // Truncate if too long
+      if (readmeContent.length > 2000) {
+        readmeContent = readmeContent.slice(0, 2000) + '\n...[truncated]';
+      }
+    }
+
+    // 4. Generate initial memory files with Gemini
+    const projectInfo = `
+Project: ${repo.name}
+Full Name: ${repo.full_name}
+Description: ${repo.description || 'No description'}
+Language: ${repo.language || 'Unknown'}
+
+## File Structure
+${repoStructure || 'Unable to fetch file structure'}
+
+## README
+${readmeContent || 'No README found'}
+`;
+
+    let smallContent = '';
+    let mediumContent = '';
+    let largeContent = '';
+
+    if (c.env.GEMINI_API_KEY) {
+      // Generate with AI
+      const initPrompt = `You are initializing Recall team memory for a new repository.
+
+${projectInfo}
+
+This is the FIRST session - there's no history yet. Create initial memory files that help AI coding assistants understand this project.`;
+
+      const [small, medium] = await Promise.all([
+        callGemini(c.env.GEMINI_API_KEY, SMALL_SUMMARY_PROMPT, initPrompt),
+        callGemini(c.env.GEMINI_API_KEY, MEDIUM_SUMMARY_PROMPT, initPrompt),
+      ]);
+
+      smallContent = small;
+      mediumContent = medium;
+      largeContent = `# ${repo.name} - Full Context
+
+## Initialization
+
+Date: ${new Date().toISOString()}
+Initialized by: @${user.github_username}
+
+## Repository Info
+- **Full Name:** ${repo.full_name}
+- **Description:** ${repo.description || 'No description'}
+- **Language:** ${repo.language || 'Unknown'}
+
+---
+
+*This is the initial setup. Session transcripts will be added here as the team uses AI coding tools.*
+`;
+    } else {
+      // Template fallback
+      smallContent = `# ${repo.name} - Team Context
+
+Sessions: 0 | Last: ${new Date().toISOString().split('T')[0]}
+Tokens: small ~300 | medium ~500 | large ~800
+
+## What It Is
+${repo.description || 'A development project.'}
+
+## Current Status
+- **Phase:** Just initialized
+- **Working:** Recall memory initialized
+- **Blocked:** None
+
+## Recent Decisions
+_No decisions recorded yet. Use your AI coding assistant and decisions will be captured here._
+
+## Key Files
+_File tracking will begin with your first AI session._
+
+---
+*medium.md = session history | large.md = full transcripts*
+`;
+
+      mediumContent = `# ${repo.name} - Development History
+
+Sessions: 0 | Updated: ${new Date().toISOString().split('T')[0]}
+
+_No sessions yet. Start using your AI coding assistant to begin building team memory._
+
+---
+*See large.md for complete chat transcripts*
+`;
+
+      largeContent = `# ${repo.name} - Full Context
+
+## Initialization
+
+Date: ${new Date().toISOString()}
+Initialized by: @${user.github_username}
+
+---
+
+*Session transcripts will be appended here.*
+`;
+    }
+
+    // 5. Encrypt the content
+    const encryptedSmall = await encryptContent(smallContent, teamKey.encryption_key);
+    const encryptedMedium = await encryptContent(mediumContent, teamKey.encryption_key);
+    const encryptedLarge = await encryptContent(largeContent, teamKey.encryption_key);
+
+    // 6. Get current commit SHA
+    const refResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/ref/heads/${defaultBranch}`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+
+    if (!refResponse.ok) {
+      throw new Error(`Failed to get branch ref: ${refResponse.status}`);
+    }
+
+    const refData = await refResponse.json() as { object: { sha: string } };
+    const baseSha = refData.object.sha;
+
+    // 7. Create blobs for each file
+    const createBlob = async (content: string): Promise<string> => {
+      const blobResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/blobs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${user.github_access_token}`,
+          'User-Agent': 'Recall-API',
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: btoa(content),
+          encoding: 'base64',
+        }),
+      });
+      const blobData = await blobResponse.json() as { sha: string };
+      return blobData.sha;
+    };
+
+    const [smallSha, mediumSha, largeSha, readmeSha] = await Promise.all([
+      createBlob(encryptedSmall),
+      createBlob(encryptedMedium),
+      createBlob(encryptedLarge),
+      createBlob(`# Recall Team Memory
+
+This directory contains encrypted team memory files managed by [Recall](https://recall.team).
+
+These files are encrypted with your team's key. Only team members with active Recall subscriptions can decrypt and read them.
+
+## Files
+
+- **small.md** - Quick context (~500 tokens) - loaded automatically
+- **medium.md** - Session history (~4k tokens) - on demand
+- **large.md** - Full transcripts (~50k tokens) - searchable
+
+## Usage
+
+1. Install the Recall MCP server in your AI coding tool
+2. Authenticate with \`recall_auth\`
+3. Memory is automatically loaded and updated
+
+Learn more at [recall.team](https://recall.team)
+`),
+    ]);
+
+    // 8. Get base tree
+    const baseTreeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/commits/${baseSha}`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+    const baseCommit = await baseTreeResponse.json() as { tree: { sha: string } };
+
+    // 9. Create tree with new files
+    const treeCreateResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/trees`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        base_tree: baseCommit.tree.sha,
+        tree: [
+          { path: '.recall/small.md', mode: '100644', type: 'blob', sha: smallSha },
+          { path: '.recall/medium.md', mode: '100644', type: 'blob', sha: mediumSha },
+          { path: '.recall/large.md', mode: '100644', type: 'blob', sha: largeSha },
+          { path: '.recall/README.md', mode: '100644', type: 'blob', sha: readmeSha },
+        ],
+      }),
+    });
+
+    const newTree = await treeCreateResponse.json() as { sha: string };
+
+    // 10. Create commit
+    const commitResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/commits`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'Initialize Recall team memory\n\nAdds encrypted .recall/ directory for AI coding assistant context.\n\nLearn more: https://recall.team',
+        tree: newTree.sha,
+        parents: [baseSha],
+      }),
+    });
+
+    const newCommit = await commitResponse.json() as { sha: string };
+
+    // 11. Update branch ref
+    await fetch(`https://api.github.com/repos/${repo.full_name}/git/refs/heads/${defaultBranch}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sha: newCommit.sha,
+      }),
+    });
+
+    // 12. Update repo record
+    const now = new Date().toISOString();
+    await c.env.DB.prepare(`
+      UPDATE repos SET initialized_at = ?, last_sync_at = ? WHERE id = ?
+    `).bind(now, now, repoId).run();
+
+    return c.json({
+      success: true,
+      message: `Recall initialized in ${repo.full_name}`,
+      commitSha: newCommit.sha,
+      files: ['.recall/small.md', '.recall/medium.md', '.recall/large.md', '.recall/README.md'],
+    });
+
+  } catch (error) {
+    console.error('Repo initialization error:', error);
+    return c.json({
+      error: 'Failed to initialize repo',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, 500);
+  }
+});
+
+// Helper: Encrypt content with AES-256-GCM
+async function encryptContent(text: string, keyBase64: string): Promise<string> {
+  const key = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoder = new TextEncoder();
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    key,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt']
+  );
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    encoder.encode(text)
+  );
+
+  // Format: iv:ciphertext (both base64)
+  const encryptedArray = new Uint8Array(encrypted);
+  const ivB64 = btoa(String.fromCharCode(...iv));
+  const cipherB64 = btoa(String.fromCharCode(...encryptedArray));
+
+  return `RECALL_ENCRYPTED:v1:${ivB64}:${cipherB64}`;
+}
 
 // Generate CLI API token
 app.post('/auth/token', async (c) => {
@@ -533,12 +1358,12 @@ app.get('/license/check', async (c) => {
     });
   }
 
-  // Count active license activations
-  const activationsCount = await c.env.DB.prepare(`
-    SELECT COUNT(*) as count FROM license_activations WHERE team_id = ?
+  // Count team members (each member uses 1 seat)
+  const memberCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM team_members WHERE team_id = ?
   `).bind(membership.id).first<{ count: number }>();
 
-  const seatsUsed = activationsCount?.count || 0;
+  const seatsUsed = memberCount?.count || 0;
 
   // Define features by tier
   const tierFeatures: Record<string, string[]> = {
@@ -650,6 +1475,13 @@ function generateSlug(name: string): string {
     .slice(0, 50);
 }
 
+// Generate a cryptographically secure AES-256 key
+async function generateEncryptionKey(): Promise<string> {
+  const key = new Uint8Array(32); // 256 bits
+  crypto.getRandomValues(key);
+  return btoa(String.fromCharCode(...key));
+}
+
 // Create team (mock checkout)
 app.post('/teams', async (c) => {
   const user = await getAuthUser(c);
@@ -697,19 +1529,29 @@ app.post('/teams', async (c) => {
   }
 
   const teamId = generateId();
+  const keyId = generateId();
   const now = new Date().toISOString();
 
-  // Create team
-  await c.env.DB.prepare(`
-    INSERT INTO teams (id, name, slug, owner_id, tier, seats, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(teamId, body.name, slug, user.id, body.tier, tierConfig.seats, now, now).run();
+  // Generate team encryption key
+  const encryptionKey = await generateEncryptionKey();
 
-  // Add user as owner
-  await c.env.DB.prepare(`
-    INSERT INTO team_members (team_id, user_id, role, joined_at)
-    VALUES (?, ?, 'owner', ?)
-  `).bind(teamId, user.id, now).run();
+  // Create team with encryption key in a batch
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      INSERT INTO teams (id, name, slug, owner_id, tier, seats, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(teamId, body.name, slug, user.id, body.tier, tierConfig.seats, now, now),
+
+    c.env.DB.prepare(`
+      INSERT INTO team_members (team_id, user_id, role, joined_at)
+      VALUES (?, ?, 'owner', ?)
+    `).bind(teamId, user.id, now),
+
+    c.env.DB.prepare(`
+      INSERT INTO team_keys (id, team_id, encryption_key, key_version, created_at)
+      VALUES (?, ?, ?, 1, ?)
+    `).bind(keyId, teamId, encryptionKey, now),
+  ]);
 
   return c.json({
     id: teamId,
@@ -763,8 +1605,294 @@ app.get('/teams/me', async (c) => {
 });
 
 // ============================================================
+// Encryption Key endpoints
+// ============================================================
+
+// Get encryption key for user's team (requires valid seat)
+app.get('/keys/team', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team membership
+  const membership = await c.env.DB.prepare(`
+    SELECT t.*, tm.role
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<Team & { role: string }>();
+
+  if (!membership) {
+    return c.json({
+      error: 'No team membership',
+      message: 'Team memory available. Visit recall.team to subscribe.',
+      hasAccess: false,
+    }, 403);
+  }
+
+  // Check if user has activated a seat (license check)
+  const body = await c.req.json<{ machineId?: string }>().catch(() => ({}));
+
+  if (body.machineId) {
+    // Verify this machine is activated
+    const activation = await c.env.DB.prepare(`
+      SELECT * FROM license_activations
+      WHERE team_id = ? AND user_id = ? AND machine_id = ?
+    `).bind(membership.id, user.id, body.machineId).first();
+
+    if (!activation) {
+      // Check if we can auto-activate (seats available)
+      const activationsCount = await c.env.DB.prepare(`
+        SELECT COUNT(*) as count FROM license_activations WHERE team_id = ?
+      `).bind(membership.id).first<{ count: number }>();
+
+      const seatsUsed = activationsCount?.count || 0;
+
+      if (seatsUsed >= membership.seats) {
+        return c.json({
+          error: 'No seats available',
+          message: 'All seats are in use. Contact your team admin.',
+          hasAccess: false,
+          seatsUsed,
+          seats: membership.seats,
+        }, 403);
+      }
+
+      // Auto-activate this machine
+      const activationId = generateId();
+      const now = new Date().toISOString();
+
+      await c.env.DB.prepare(`
+        INSERT INTO license_activations (id, team_id, user_id, machine_id, last_seen_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(activationId, membership.id, user.id, body.machineId, now, now).run();
+    } else {
+      // Update last_seen
+      await c.env.DB.prepare(`
+        UPDATE license_activations SET last_seen_at = datetime('now')
+        WHERE team_id = ? AND machine_id = ?
+      `).bind(membership.id, body.machineId).run();
+    }
+  }
+
+  // Get the encryption key
+  const teamKey = await c.env.DB.prepare(`
+    SELECT encryption_key, key_version FROM team_keys WHERE team_id = ?
+  `).bind(membership.id).first<{ encryption_key: string; key_version: number }>();
+
+  if (!teamKey) {
+    // This shouldn't happen - create key if missing (legacy teams)
+    const keyId = generateId();
+    const encryptionKey = await generateEncryptionKey();
+    const now = new Date().toISOString();
+
+    await c.env.DB.prepare(`
+      INSERT INTO team_keys (id, team_id, encryption_key, key_version, created_at)
+      VALUES (?, ?, ?, 1, ?)
+    `).bind(keyId, membership.id, encryptionKey, now).run();
+
+    return c.json({
+      hasAccess: true,
+      key: encryptionKey,
+      keyVersion: 1,
+      teamId: membership.id,
+      teamSlug: membership.slug,
+    });
+  }
+
+  return c.json({
+    hasAccess: true,
+    key: teamKey.encryption_key,
+    keyVersion: teamKey.key_version,
+    teamId: membership.id,
+    teamSlug: membership.slug,
+  });
+});
+
+// Rotate team encryption key (admin only)
+app.post('/keys/rotate', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team membership and verify admin/owner role
+  const membership = await c.env.DB.prepare(`
+    SELECT t.*, tm.role
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ? AND tm.role IN ('owner', 'admin')
+    LIMIT 1
+  `).bind(user.id).first<Team & { role: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'Forbidden - requires admin or owner role' }, 403);
+  }
+
+  // Generate new key
+  const newKey = await generateEncryptionKey();
+  const now = new Date().toISOString();
+
+  await c.env.DB.prepare(`
+    UPDATE team_keys
+    SET encryption_key = ?, key_version = key_version + 1, rotated_at = ?
+    WHERE team_id = ?
+  `).bind(newKey, now, membership.id).run();
+
+  // Get updated key info
+  const teamKey = await c.env.DB.prepare(`
+    SELECT key_version FROM team_keys WHERE team_id = ?
+  `).bind(membership.id).first<{ key_version: number }>();
+
+  return c.json({
+    success: true,
+    keyVersion: teamKey?.key_version || 1,
+    rotatedAt: now,
+    message: 'Key rotated. All team members will need to re-encrypt their local files.',
+  });
+});
+
+// ============================================================
 // Summarization endpoint
 // ============================================================
+
+interface GeminiResponse {
+  candidates: Array<{
+    content: {
+      parts: Array<{ text: string }>;
+    };
+    finishReason: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+  };
+}
+
+async function callGemini(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: userPrompt }],
+          },
+        ],
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 8192,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Gemini API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json() as GeminiResponse;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+const SMALL_SUMMARY_PROMPT = `You are a technical writer creating concise team context for AI coding assistants.
+
+Your output will be read by an AI at the start of every coding session to give it instant context about the project.
+
+Create a small.md file (~500 tokens max) with this structure:
+
+# [Project Name] - Team Context
+
+Sessions: [count] | Last: [date]
+Tokens: small ~[X] | medium ~[X] | large ~[X]
+
+## What It Is
+[One paragraph: what this project does, core value prop]
+
+## Current Status
+- **Phase:** [current phase]
+- **Working:** [key things that work]
+- **Blocked:** [blockers if any]
+
+## Recent Decisions
+- [Decision 1 with WHY, not just what]
+- [Decision 2 with WHY]
+- [Decision 3 with WHY]
+
+## Don't Repeat These Mistakes
+- [Failed approach 1 and why it failed]
+- [Failed approach 2 and why it failed]
+
+## Key Files
+- **[path]** - [what it does]
+- **[path]** - [what it does]
+
+---
+*medium.md = session history | large.md = full transcripts*
+
+RULES:
+- Be SPECIFIC. Names, paths, versions, not vague descriptions.
+- Include WHY decisions were made, not just WHAT.
+- Failed experiments are valuable - capture them.
+- Keep it scannable - an AI will read this in 2 seconds.`;
+
+const MEDIUM_SUMMARY_PROMPT = `You are a technical writer creating session history for AI coding assistants.
+
+Your output captures the development journey so AI can understand what happened and avoid repeating mistakes.
+
+Create a medium.md file (~4k tokens) with this structure:
+
+# [Project Name] - Development History
+
+Sessions: [count] | Updated: [date]
+
+## [Date] (Session N): [Session Title]
+
+### What Was Done
+[2-3 paragraphs describing the work, decisions made, files changed]
+
+### Key Decisions
+- **[Decision]:** [Reasoning - the WHY is critical]
+
+### Files Changed
+- \`[path]\` - [what changed and why]
+
+### Gotchas/Lessons
+- [Anything surprising or important to remember]
+
+### What Failed (if applicable)
+- **Tried:** [approach]
+- **Failed because:** [reason]
+- **Don't repeat:** [explicit warning]
+
+---
+
+[Repeat for each session, most recent first]
+
+---
+*See large.md for complete chat transcripts*
+
+RULES:
+- Group by session, most recent first
+- Include the REASONING behind decisions
+- Failed experiments get their own section with "Don't Repeat This"
+- Be specific about files, not vague about "various files"
+- This should read like a development journal`;
 
 app.post('/summarize', async (c) => {
   const user = await getAuthUser(c);
@@ -772,7 +1900,7 @@ app.post('/summarize', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  const body = await c.req.json<{ events?: RecallEvent[] }>();
+  const body = await c.req.json<{ events?: RecallEvent[]; projectName?: string }>();
 
   if (!body.events || !Array.isArray(body.events)) {
     return c.json({ error: 'Missing events array' }, 400);
@@ -785,20 +1913,54 @@ app.post('/summarize', async (c) => {
     });
   }
 
-  // If no Anthropic key, return template-based summaries
-  if (!c.env.ANTHROPIC_API_KEY) {
+  // If no Gemini key, return template-based summaries
+  if (!c.env.GEMINI_API_KEY) {
+    console.warn('No GEMINI_API_KEY set, using template-based summaries');
     return c.json({
       small: generateSmallSummary(body.events),
       medium: generateMediumSummary(body.events),
     });
   }
 
-  // TODO: Call Claude API for AI-powered summarization
-  // For now, use template-based summaries
-  return c.json({
-    small: generateSmallSummary(body.events),
-    medium: generateMediumSummary(body.events),
-  });
+  try {
+    // Format events for Gemini
+    const eventsText = body.events.map(e => {
+      const date = e.ts.split('T')[0];
+      const time = e.ts.split('T')[1]?.split('.')[0] || '';
+      const files = e.files?.length ? ` | Files: ${e.files.join(', ')}` : '';
+      return `[${date} ${time}] ${e.type.toUpperCase()} (${e.tool}, ${e.user}): ${e.summary}${files}`;
+    }).join('\n');
+
+    const projectName = body.projectName || 'Project';
+    const sessionCount = body.events.filter(e => e.type === 'session').length || body.events.length;
+    const lastDate = body.events[body.events.length - 1]?.ts.split('T')[0] || new Date().toISOString().split('T')[0];
+
+    const userPrompt = `Project: ${projectName}
+Sessions: ${sessionCount}
+Last Updated: ${lastDate}
+
+Here are the development events to summarize:
+
+${eventsText}
+
+Generate the summary now.`;
+
+    // Generate both summaries in parallel
+    const [small, medium] = await Promise.all([
+      callGemini(c.env.GEMINI_API_KEY, SMALL_SUMMARY_PROMPT, userPrompt),
+      callGemini(c.env.GEMINI_API_KEY, MEDIUM_SUMMARY_PROMPT, userPrompt),
+    ]);
+
+    return c.json({ small, medium });
+  } catch (error) {
+    console.error('Summarization error:', error);
+    // Fallback to template-based on error
+    return c.json({
+      small: generateSmallSummary(body.events),
+      medium: generateMediumSummary(body.events),
+      warning: 'AI summarization failed, using template fallback',
+    });
+  }
 });
 
 // ============================================================

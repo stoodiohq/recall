@@ -7,7 +7,8 @@
  */
 
 import { Command } from 'commander';
-import { authCommand, initCommand, saveCommand, statusCommand, syncCommand } from './commands/index.js';
+import { authCommand, initCommand, loadCommand, saveCommand, setupCommand, statusCommand, syncCommand } from './commands/index.js';
+import { hookCommand } from './hooks/claude-code.js';
 
 const program = new Command();
 
@@ -15,6 +16,11 @@ program
   .name('recall')
   .description('Team memory for AI coding assistants')
   .version('0.1.0');
+
+program
+  .command('setup')
+  .description('One-command setup: authenticate, initialize, and install hooks')
+  .action(setupCommand);
 
 program
   .command('auth')
@@ -28,6 +34,14 @@ program
   .command('init')
   .description('Initialize Recall in the current git repository')
   .action(initCommand);
+
+program
+  .command('load')
+  .description('Load and decrypt team memory context')
+  .option('-s, --size <size>', 'Snapshot size: small, medium, large', 'small')
+  .option('-f, --format <format>', 'Output format: plain, json', 'plain')
+  .option('--quiet', 'Suppress status messages')
+  .action(loadCommand);
 
 program
   .command('save')
@@ -47,5 +61,37 @@ program
   .option('--regenerate', 'Regenerate snapshots after sync')
   .option('--quiet', 'Suppress non-error output')
   .action(syncCommand);
+
+// Hook commands for AI tool integration
+const hook = program
+  .command('hook')
+  .description('Manage AI tool hooks (Claude Code, etc.)');
+
+hook
+  .command('install')
+  .description('Install Recall hooks into Claude Code')
+  .action(() => hookCommand('install'));
+
+hook
+  .command('uninstall')
+  .description('Remove Recall hooks from Claude Code')
+  .action(() => hookCommand('uninstall'));
+
+hook
+  .command('status')
+  .description('Check if Recall hooks are installed')
+  .action(() => hookCommand('status'));
+
+hook
+  .command('context')
+  .description('(Internal) Output context for AI tool')
+  .action(() => hookCommand('context'));
+
+hook
+  .command('save')
+  .description('(Internal) Save context after session')
+  .option('--auto', 'Auto mode')
+  .option('--quiet', 'Quiet mode')
+  .action((opts) => hookCommand('save', opts));
 
 program.parse();
