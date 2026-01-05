@@ -21,6 +21,7 @@ import * as crypto from 'crypto';
 const API_URL = 'https://recall-api.stoodiohq.workers.dev';
 const RECALL_DIR = '.recall';
 const CONFIG_PATH = path.join(os.homedir(), '.recall', 'config.json');
+const IMPORTED_SESSIONS_FILE = 'imported-sessions.json';
 
 interface RecallConfig {
   token: string;
@@ -33,6 +34,15 @@ interface TeamKey {
   teamId: string;
   teamSlug: string;
   message?: string;
+}
+
+interface ImportedSessionsTracker {
+  version: number;
+  sessions: Array<{
+    filename: string;
+    importedAt: string;
+    mtime: number;
+  }>;
 }
 
 // Encryption helpers using AES-256-GCM
@@ -314,6 +324,152 @@ function getCurrentRepoName(): string | null {
 }
 
 /**
+ * Read the imported sessions tracker
+ */
+function readImportedSessionsTracker(): ImportedSessionsTracker {
+  const trackerPath = path.join(getRecallDir(), IMPORTED_SESSIONS_FILE);
+
+  if (!fs.existsSync(trackerPath)) {
+    return { version: 1, sessions: [] };
+  }
+
+  try {
+    const content = fs.readFileSync(trackerPath, 'utf-8');
+    return JSON.parse(content);
+  } catch {
+    return { version: 1, sessions: [] };
+  }
+}
+
+/**
+ * Write the imported sessions tracker
+ */
+function writeImportedSessionsTracker(tracker: ImportedSessionsTracker): void {
+  ensureRecallDir();
+  const trackerPath = path.join(getRecallDir(), IMPORTED_SESSIONS_FILE);
+  fs.writeFileSync(trackerPath, JSON.stringify(tracker, null, 2));
+}
+
+/**
+ * Auto-import new sessions on startup
+ * This is the core of automatic session capture
+ */
+async function autoImportNewSessions(): Promise<{ imported: number; skipped: number }> {
+  const config = loadConfig();
+  if (!config?.token) {
+    console.error('[Recall] Auto-import: Not authenticated');
+    return { imported: 0, skipped: 0 };
+  }
+
+  // Check if .recall/ exists - don't auto-create, wait for recall_init
+  const recallDir = getRecallDir();
+  if (!fs.existsSync(recallDir)) {
+    console.error('[Recall] Auto-import: No .recall/ directory yet');
+    return { imported: 0, skipped: 0 };
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    console.error('[Recall] Auto-import: No team access');
+    return { imported: 0, skipped: 0 };
+  }
+
+  // Find all session files
+  const sessionFiles = findAllSessionFiles();
+  if (sessionFiles.length === 0) {
+    console.error('[Recall] Auto-import: No session files found');
+    return { imported: 0, skipped: 0 };
+  }
+
+  // Read tracker to see what's already imported
+  const tracker = readImportedSessionsTracker();
+
+  // Find new sessions (by filename and mtime)
+  const newSessions: Array<{ path: string; filename: string; mtime: number }> = [];
+
+  for (const sessionPath of sessionFiles) {
+    const filename = path.basename(sessionPath);
+    const stat = fs.statSync(sessionPath);
+
+    // Check if already imported with same mtime (file could be updated)
+    const existingImport = tracker.sessions.find(s => s.filename === filename);
+    if (existingImport && existingImport.mtime >= stat.mtimeMs) {
+      // Already imported and file hasn't changed
+      continue;
+    }
+
+    newSessions.push({
+      path: sessionPath,
+      filename,
+      mtime: stat.mtimeMs,
+    });
+  }
+
+  if (newSessions.length === 0) {
+    console.error('[Recall] Auto-import: All sessions already imported');
+    return { imported: 0, skipped: sessionFiles.length };
+  }
+
+  console.error(`[Recall] Auto-import: Found ${newSessions.length} new/updated sessions to import`);
+
+  // Read existing large.md or create new
+  const repoName = getCurrentRepoName() || path.basename(process.cwd());
+  let largeContent = readRecallFile('large.md', teamKey.key);
+
+  if (!largeContent) {
+    largeContent = `# ${repoName} - Full Session Transcripts\n\n`;
+  }
+
+  // Process new sessions (oldest first)
+  const sortedNewSessions = [...newSessions].sort((a, b) => a.mtime - b.mtime);
+
+  for (const session of sortedNewSessions) {
+    const sessionDate = new Date(session.mtime);
+    const dateStr = sessionDate.toISOString().split('T')[0];
+    const timeStr = sessionDate.toTimeString().split(' ')[0];
+
+    console.error(`[Recall] Auto-import: Processing ${session.filename}`);
+
+    const transcript = parseSessionTranscript(session.path);
+    const messageCount = (transcript.match(/\*\*User:\*\*|\*\*Assistant:\*\*/g) || []).length;
+
+    // Add to large.md
+    largeContent += `\n---\n\n## Session: ${dateStr} ${timeStr}\n`;
+    largeContent += `_File: ${session.filename}_\n\n`;
+    largeContent += transcript;
+    largeContent += `\n_${messageCount} messages (auto-imported)_\n\n`;
+
+    // Update tracker
+    const existingIndex = tracker.sessions.findIndex(s => s.filename === session.filename);
+    if (existingIndex >= 0) {
+      tracker.sessions[existingIndex] = {
+        filename: session.filename,
+        importedAt: new Date().toISOString(),
+        mtime: session.mtime,
+      };
+    } else {
+      tracker.sessions.push({
+        filename: session.filename,
+        importedAt: new Date().toISOString(),
+        mtime: session.mtime,
+      });
+    }
+  }
+
+  // Write updated large.md
+  writeRecallFile('large.md', largeContent, teamKey.key);
+
+  // Write updated tracker
+  writeImportedSessionsTracker(tracker);
+
+  // Log activity
+  logMemoryAccess(config.token, 'large', 'write');
+
+  console.error(`[Recall] Auto-import: Imported ${newSessions.length} sessions`);
+  return { imported: newSessions.length, skipped: sessionFiles.length - newSessions.length };
+}
+
+/**
  * Find ALL Claude Code session JSONL files for current project
  * Claude stores sessions in ~/.claude/projects/<path-with-dashes>/
  * e.g., /Users/ray/myproject -> -Users-ray-myproject
@@ -485,7 +641,7 @@ async function generateSummaries(
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.4.4',
+  version: '0.4.7',
 }, {
   capabilities: {
     tools: {},
@@ -1766,6 +1922,19 @@ async function main() {
     getTeamKey(config.token).catch(() => {
       // Silently ignore - just trying to register the connection
     });
+  }
+
+  // AUTO-IMPORT: This is the core automatic session capture
+  // On every MCP startup (i.e., every new Claude session), check for new sessions
+  // and import them to large.md without requiring user action
+  try {
+    const result = await autoImportNewSessions();
+    if (result.imported > 0) {
+      console.error(`[Recall] Auto-imported ${result.imported} new session(s)`);
+    }
+  } catch (error) {
+    // Non-fatal - don't block MCP startup
+    console.error('[Recall] Auto-import failed:', error instanceof Error ? error.message : 'Unknown error');
   }
 
   await server.connect(transport);
