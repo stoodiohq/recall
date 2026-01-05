@@ -893,18 +893,19 @@ function setupClaudeInstructions(): void {
 
   const recallInstructions = `
 <!-- RECALL:START -->
-## Recall Team Memory
+## Recall Team Memory (MANDATORY)
 
-At the START of every coding session, automatically read the team memory by using the \`recall-context\` prompt or reading the \`recall://context\` resource. This provides context about what the team has been working on.
+**ON SESSION START - ALWAYS DO THIS FIRST:**
+Call \`recall_get_context\` to load team memory (small.md). Do this before responding to any user request.
 
-**Hot words for more context:**
-- When user says "remember" - load session history via \`recall://history\` or \`recall_get_history\`
-- When user says "ultraremember" - load full transcripts via \`recall://transcripts\`
+**HOTWORD RULES (exact word match required):**
+- User says "remember" → Call \`recall_get_history\` (loads medium.md ONLY, not large.md)
+- User says "ultraremember" → Read \`recall://transcripts\` (loads large.md)
 
-**At the END of sessions:**
-- Use \`recall_save_session\` to save what was accomplished
+**IMPORTANT:** "remember" means ONLY medium.md. Do NOT load large.md unless user specifically says "ultraremember".
 
-This ensures team knowledge is preserved and shared across all team members.
+**AT SESSION END:**
+Use \`recall_save_session\` to save what was accomplished.
 <!-- RECALL:END -->
 `;
 
