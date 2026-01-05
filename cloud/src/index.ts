@@ -2025,8 +2025,62 @@ app.delete('/invites/:code', async (c) => {
   return c.json({ success: true });
 });
 
-// ============================================================
-// Encryption Key endpoints
+// Remove a team member (admin only)
+app.delete('/teams/members/:userId', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const targetUserId = c.req.param('userId');
+  const fullDelete = c.req.query('fullDelete') === 'true';
+
+  // Get user's team and verify they're the owner
+  const membership = await c.env.DB.prepare(`
+    SELECT tm.team_id, tm.role
+    FROM team_members tm
+    WHERE tm.user_id = ?
+  `).bind(user.id).first<{ team_id: string; role: string }>();
+
+  if (!membership || membership.role !== 'owner') {
+    return c.json({ error: 'Only team owner can remove members' }, 403);
+  }
+
+  // Verify target user is in the same team
+  const targetMembership = await c.env.DB.prepare(`
+    SELECT id FROM team_members WHERE user_id = ? AND team_id = ?
+  `).bind(targetUserId, membership.team_id).first<{ id: string }>();
+
+  if (!targetMembership) {
+    return c.json({ error: 'User not in your team' }, 404);
+  }
+
+  // Don't allow removing yourself
+  if (targetUserId === user.id) {
+    return c.json({ error: 'Cannot remove yourself' }, 400);
+  }
+
+  // Delete team membership
+  await c.env.DB.prepare(`
+    DELETE FROM team_members WHERE user_id = ? AND team_id = ?
+  `).bind(targetUserId, membership.team_id).run();
+
+  // Delete access logs for this user in this team
+  await c.env.DB.prepare(`
+    DELETE FROM memory_access_logs WHERE user_id = ? AND team_id = ?
+  `).bind(targetUserId, membership.team_id).run();
+
+  // If fullDelete, delete the entire user record
+  if (fullDelete) {
+    // This will cascade delete any other team memberships, etc.
+    await c.env.DB.prepare(`
+      DELETE FROM users WHERE id = ?
+    `).bind(targetUserId).run();
+  }
+
+  return c.json({ success: true, fullDelete });
+});
+
 // ============================================================
 // Memory Access Tracking
 // ============================================================

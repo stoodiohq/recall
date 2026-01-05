@@ -80,6 +80,7 @@ function TeamPageContent() {
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [newInviteUrl, setNewInviteUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [removingMember, setRemovingMember] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -210,7 +211,43 @@ function TeamPageContent() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleRemoveMember = async (memberId: string, memberName: string, fullDelete: boolean = false) => {
+    const token = getToken();
+    if (!token) return;
+
+    const action = fullDelete ? 'completely delete' : 'remove';
+    if (!confirm(`Are you sure you want to ${action} ${memberName} from the team?${fullDelete ? ' This will delete their entire account.' : ''}`)) return;
+
+    setRemovingMember(memberId);
+    try {
+      const response = await fetch(`${API_URL}/teams/members/${memberId}?fullDelete=${fullDelete}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        // Refresh team data
+        const teamResponse = await fetch(`${API_URL}/teams/me`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (teamResponse.ok) {
+          const data = await teamResponse.json();
+          setTeam(data.team);
+        }
+      } else {
+        const error = await response.json();
+        alert(error.error || 'Failed to remove member');
+      }
+    } catch (error) {
+      console.error('Failed to remove member:', error);
+      alert('Failed to remove member');
+    } finally {
+      setRemovingMember(null);
+    }
+  };
+
   const isAdmin = team?.role === 'owner' || team?.role === 'admin';
+  const isOwner = team?.role === 'owner';
   const pendingInvites = invites.filter(i => i.isActive);
   const usedInvites = invites.filter(i => i.acceptedAt);
 
@@ -373,6 +410,24 @@ function TeamPageContent() {
                     Joined {getTimeAgo(member.joined_at)}
                   </p>
                 </div>
+                {isOwner && member.role !== 'owner' && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleRemoveMember(member.id, member.name || member.github_username || member.email, false)}
+                      disabled={removingMember === member.id}
+                      className="px-3 py-1.5 text-xs text-text-tertiary hover:text-yellow-400 hover:bg-yellow-400/10 rounded transition-colors disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      onClick={() => handleRemoveMember(member.id, member.name || member.github_username || member.email, true)}
+                      disabled={removingMember === member.id}
+                      className="px-3 py-1.5 text-xs text-text-tertiary hover:text-red-400 hover:bg-red-400/10 rounded transition-colors disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
