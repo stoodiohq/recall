@@ -46,8 +46,8 @@ function encrypt(text: string, keyBase64: string): string {
 
   const authTag = cipher.getAuthTag();
 
-  // Format: iv:authTag:ciphertext (all base64)
-  return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
+  // Format: RECALL_ENCRYPTED:v1:iv:authTag:ciphertext (versioned format)
+  return `RECALL_ENCRYPTED:v1:${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
 }
 
 function decrypt(encryptedData: string, keyBase64: string): string {
@@ -163,6 +163,7 @@ function getMachineId(): string {
 async function getTeamKey(token: string): Promise<TeamKey | null> {
   try {
     const machineId = getMachineId();
+    console.error(`[Recall] Fetching team key... (machineId: ${machineId})`);
 
     const response = await fetch(`${API_URL}/keys/team`, {
       method: 'GET',
@@ -172,17 +173,27 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
       },
     });
 
+    console.error(`[Recall] Team key response: ${response.status}`);
+
     if (!response.ok) {
+      const text = await response.text();
+      console.error(`[Recall] Team key error: ${text}`);
       if (response.status === 403) {
-        const data = await response.json();
-        return { hasAccess: false, key: '', keyVersion: 0, teamId: '', teamSlug: '', ...data };
+        try {
+          const data = JSON.parse(text);
+          return { hasAccess: false, key: '', keyVersion: 0, teamId: '', teamSlug: '', ...data };
+        } catch {
+          return { hasAccess: false, key: '', keyVersion: 0, teamId: '', teamSlug: '', message: text };
+        }
       }
       return null;
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.error(`[Recall] Team key success: hasAccess=${data.hasAccess}, keyVersion=${data.keyVersion}, teamId=${data.teamId}`);
+    return data;
   } catch (error) {
-    console.error('Failed to fetch team key:', error);
+    console.error('[Recall] Failed to fetch team key:', error);
     return null;
   }
 }
@@ -192,23 +203,49 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
  */
 function readRecallFile(filename: string, key: string): string | null {
   const filePath = path.join(getRecallDir(), filename);
+  console.error(`[Recall] readRecallFile: ${filename}`);
 
   if (!fs.existsSync(filePath)) {
+    console.error(`[Recall] File not found: ${filePath}`);
     return null;
   }
 
   try {
     const encrypted = fs.readFileSync(filePath, 'utf-8');
+    console.error(`[Recall] File content preview: ${encrypted.substring(0, 80)}...`);
+    console.error(`[Recall] Key present: ${!!key}, key length: ${key?.length || 0}`);
 
-    // Check if file is encrypted (starts with base64 pattern with colons)
+    // Check for versioned encryption format: RECALL_ENCRYPTED:v1:iv:authTag:ciphertext
+    if (encrypted.startsWith('RECALL_ENCRYPTED:')) {
+      console.error(`[Recall] Detected versioned encryption format`);
+      const parts = encrypted.split(':');
+      // Format: RECALL_ENCRYPTED:v1:iv:authTag:ciphertext (5 parts)
+      if (parts.length === 5 && parts[0] === 'RECALL_ENCRYPTED' && parts[1] === 'v1') {
+        // Extract iv:authTag:ciphertext
+        const encryptedData = `${parts[2]}:${parts[3]}:${parts[4]}`;
+        console.error(`[Recall] Extracted encrypted data (v1 format)`);
+        const decrypted = decrypt(encryptedData, key);
+        console.error(`[Recall] Decryption successful, length: ${decrypted.length}`);
+        return decrypted;
+      } else {
+        console.error(`[Recall] Unknown version format, parts: ${parts.length}`);
+        throw new Error(`Unknown encryption format version`);
+      }
+    }
+
+    // Check if file is encrypted (legacy format: iv:authTag:ciphertext)
     if (encrypted.includes(':')) {
-      return decrypt(encrypted, key);
+      console.error(`[Recall] Detected legacy encryption format`);
+      const decrypted = decrypt(encrypted, key);
+      console.error(`[Recall] Decryption successful, length: ${decrypted.length}`);
+      return decrypted;
     }
 
     // File is not encrypted (legacy or first run)
+    console.error(`[Recall] File is not encrypted (plaintext)`);
     return encrypted;
   } catch (error) {
-    console.error(`Failed to read ${filename}:`, error);
+    console.error(`[Recall] Failed to read/decrypt ${filename}:`, error);
     return null;
   }
 }
@@ -233,7 +270,7 @@ async function logMemoryAccess(
 ): Promise<void> {
   const repoName = getCurrentRepoName();
 
-  // Fire and forget - don't block on logging
+  // Fire and forget - but log errors for debugging
   fetch(`${API_URL}/memory/access`, {
     method: 'POST',
     headers: {
@@ -241,9 +278,18 @@ async function logMemoryAccess(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ fileType, action, repoName }),
-  }).catch(() => {
-    // Silently ignore logging failures
-  });
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => 'no body');
+        console.error(`[Recall] Activity log failed: ${response.status} - ${text}`);
+      } else {
+        console.error(`[Recall] Activity logged: ${action} ${fileType} for ${repoName}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`[Recall] Activity log error:`, error.message || error);
+    });
 }
 
 /**
@@ -267,10 +313,179 @@ function getCurrentRepoName(): string | null {
   return path.basename(process.cwd());
 }
 
+/**
+ * Find ALL Claude Code session JSONL files for current project
+ * Claude stores sessions in ~/.claude/projects/<path-with-dashes>/
+ * e.g., /Users/ray/myproject -> -Users-ray-myproject
+ *
+ * Returns array of all session files, sorted by modification time (newest first)
+ */
+function findAllSessionFiles(): string[] {
+  const claudeProjectsDir = path.join(os.homedir(), '.claude', 'projects');
+  const sessionFiles: Array<{ path: string; mtime: number }> = [];
+
+  if (!fs.existsSync(claudeProjectsDir)) {
+    console.error('[Recall] No ~/.claude/projects directory found');
+    return [];
+  }
+
+  const cwd = process.cwd();
+  console.error(`[Recall] Looking for session files for: ${cwd}`);
+
+  // Claude uses path with slashes replaced by dashes
+  // /Users/ray/project -> -Users-ray-project
+  const projectDirName = cwd.replace(/\//g, '-');
+
+  // Also check parent directories (in case Claude was opened at parent level)
+  const pathsToCheck = [projectDirName];
+  let parentPath = cwd;
+  while (parentPath !== '/' && parentPath !== os.homedir()) {
+    parentPath = path.dirname(parentPath);
+    if (parentPath !== '/') {
+      pathsToCheck.push(parentPath.replace(/\//g, '-'));
+    }
+  }
+
+  console.error(`[Recall] Checking project dirs: ${pathsToCheck.join(', ')}`);
+
+  for (const dirName of pathsToCheck) {
+    const projectPath = path.join(claudeProjectsDir, dirName);
+
+    if (!fs.existsSync(projectPath)) {
+      continue;
+    }
+
+    console.error(`[Recall] Found project dir: ${projectPath}`);
+
+    // Find all .jsonl files (excluding agent- files which are subagent logs)
+    const files = fs.readdirSync(projectPath);
+    for (const file of files) {
+      if (file.endsWith('.jsonl') && !file.startsWith('agent-')) {
+        const sessionPath = path.join(projectPath, file);
+        const stat = fs.statSync(sessionPath);
+        sessionFiles.push({ path: sessionPath, mtime: stat.mtimeMs });
+      }
+    }
+  }
+
+  // Sort by modification time (newest first)
+  sessionFiles.sort((a, b) => b.mtime - a.mtime);
+
+  console.error(`[Recall] Found ${sessionFiles.length} session files`);
+  return sessionFiles.map(f => f.path);
+}
+
+/**
+ * Find single most recent session file (for backward compatibility)
+ */
+function findSessionFile(): string | null {
+  const files = findAllSessionFiles();
+  return files.length > 0 ? files[0] : null;
+}
+
+/**
+ * Parse session JSONL file and extract transcript
+ * Claude Code format: {type: "user"|"assistant", message: {role, content}}
+ */
+function parseSessionTranscript(sessionFile: string): string {
+  const fileContent = fs.readFileSync(sessionFile, 'utf-8');
+  const lines = fileContent.trim().split('\n');
+
+  let transcript = '';
+  let messageCount = 0;
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    try {
+      const entry = JSON.parse(line);
+
+      // Claude Code JSONL format: {type: "user"|"assistant", message: {content: ...}}
+      if (entry.type === 'user' && entry.message?.content) {
+        const content = typeof entry.message.content === 'string'
+          ? entry.message.content
+          : JSON.stringify(entry.message.content);
+        transcript += `**User:**\n${content}\n\n`;
+        messageCount++;
+      } else if (entry.type === 'assistant' && entry.message?.content) {
+        // Assistant content is an array of {type: "text", text: "..."} objects
+        let content = '';
+        if (Array.isArray(entry.message.content)) {
+          content = entry.message.content
+            .filter((c: { type: string }) => c.type === 'text')
+            .map((c: { text: string }) => c.text)
+            .join('\n');
+        } else if (typeof entry.message.content === 'string') {
+          content = entry.message.content;
+        }
+        if (content) {
+          transcript += `**Assistant:**\n${content}\n\n`;
+          messageCount++;
+        }
+      }
+      // Skip queue-operation, summary, and other non-message entries
+    } catch {
+      // Skip malformed lines
+      continue;
+    }
+  }
+
+  console.error(`[Recall] Parsed ${messageCount} messages from session`);
+  return transcript;
+}
+
+/**
+ * Call the /summarize API to generate AI summaries
+ */
+async function generateSummaries(
+  token: string,
+  transcript: string,
+  repoName: string
+): Promise<{ small: string; medium: string } | null> {
+  try {
+    console.error('[Recall] Calling /summarize API...');
+
+    const response = await fetch(`${API_URL}/summarize`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        events: [{
+          type: 'session',
+          timestamp: new Date().toISOString(),
+          data: {
+            transcript,
+            repoName,
+          },
+        }],
+        repoName,
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[Recall] Summarize API error: ${response.status} - ${text}`);
+      return null;
+    }
+
+    const data = await response.json();
+    console.error('[Recall] Summarize API success');
+    return {
+      small: data.small || '',
+      medium: data.medium || '',
+    };
+  } catch (error) {
+    console.error('[Recall] Summarize API failed:', error);
+    return null;
+  }
+}
+
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.2.2',
+  version: '0.4.4',
 }, {
   capabilities: {
     tools: {},
@@ -566,7 +781,20 @@ server.registerTool('recall_auth', {
 // Tool: recall_get_context - Get team memory for current repo
 server.registerTool('recall_get_context', {
   description: 'Get team memory and context for the current repository. Returns the small.md quick context. Use recall_get_history for more detailed session history.',
-}, async () => {
+  inputSchema: z.object({
+    projectPath: z.string().optional().describe('Optional: explicit path to the project root. If not provided, uses current working directory.'),
+  }).shape,
+}, async (args) => {
+  const projectPath = args.projectPath as string | undefined;
+
+  // Log the paths for debugging
+  const cwd = process.cwd();
+  const effectivePath = projectPath || cwd;
+  console.error(`[Recall] recall_get_context called`);
+  console.error(`[Recall]   process.cwd(): ${cwd}`);
+  console.error(`[Recall]   projectPath arg: ${projectPath || '(not provided)'}`);
+  console.error(`[Recall]   effective path: ${effectivePath}`);
+
   const config = loadConfig();
   if (!config?.token) {
     return {
@@ -583,19 +811,49 @@ server.registerTool('recall_get_context', {
     };
   }
 
-  const smallContent = readRecallFile('small.md', teamKey.key);
+  // Use explicit path if provided, otherwise use cwd
+  const recallDir = projectPath
+    ? path.join(projectPath, RECALL_DIR)
+    : getRecallDir();
+  console.error(`[Recall]   reading from: ${recallDir}`);
+
+  const smallPath = path.join(recallDir, 'small.md');
+  if (!fs.existsSync(smallPath)) {
+    const repoName = getCurrentRepoName();
+    return {
+      content: [{ type: 'text', text: `No team memory found for this repo yet.\n\nTo start building memory, use:\n- recall_save_session to save session summaries\n- recall_log_decision to log important decisions\n\nRepo: ${repoName}\nLooking in: ${recallDir}` }],
+    };
+  }
+
+  // Read and decrypt
+  const encrypted = fs.readFileSync(smallPath, 'utf-8');
+  let smallContent: string | null = null;
+
+  // Handle versioned encryption format
+  if (encrypted.startsWith('RECALL_ENCRYPTED:')) {
+    const parts = encrypted.split(':');
+    if (parts.length === 5 && parts[0] === 'RECALL_ENCRYPTED' && parts[1] === 'v1') {
+      const encryptedData = `${parts[2]}:${parts[3]}:${parts[4]}`;
+      smallContent = decrypt(encryptedData, teamKey.key);
+    }
+  } else if (encrypted.includes(':')) {
+    smallContent = decrypt(encrypted, teamKey.key);
+  } else {
+    smallContent = encrypted;
+  }
 
   if (!smallContent) {
     const repoName = getCurrentRepoName();
     return {
-      content: [{ type: 'text', text: `No team memory found for this repo yet.\n\nTo start building memory, use:\n- recall_save_session to save session summaries\n- recall_log_decision to log important decisions\n\nRepo: ${repoName}` }],
+      content: [{ type: 'text', text: `Failed to decrypt team memory.\n\nRepo: ${repoName}\nPath: ${recallDir}` }],
+      isError: true,
     };
   }
 
   // Log access (non-blocking)
   logMemoryAccess(config.token, 'small', 'read');
 
-  return { content: [{ type: 'text', text: smallContent }] };
+  return { content: [{ type: 'text', text: `[Reading from: ${recallDir}]\n\n${smallContent}` }] };
 });
 
 // Tool: recall_get_history - Get detailed session history
@@ -630,6 +888,239 @@ server.registerTool('recall_get_history', {
   logMemoryAccess(config.token, 'medium', 'read');
 
   return { content: [{ type: 'text', text: mediumContent }] };
+});
+
+// Tool: recall_get_transcripts - Get full session transcripts (large.md)
+server.registerTool('recall_get_transcripts', {
+  description: 'Get full session transcripts (large.md). WARNING: This can be very large and use many tokens. Only use when you need complete historical details.',
+}, async () => {
+  const config = loadConfig();
+  if (!config?.token) {
+    return {
+      content: [{ type: 'text', text: 'Not authenticated. Run recall_auth first.' }],
+      isError: true,
+    };
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    return {
+      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      isError: true,
+    };
+  }
+
+  const largeContent = readRecallFile('large.md', teamKey.key);
+
+  if (!largeContent) {
+    return {
+      content: [{ type: 'text', text: 'No transcripts yet. Use recall_save_session to start building history.' }],
+    };
+  }
+
+  // Log access (non-blocking)
+  logMemoryAccess(config.token, 'large', 'read');
+
+  return { content: [{ type: 'text', text: largeContent }] };
+});
+
+// Tool: recall_import_transcript - Import full session transcript from JSONL file
+server.registerTool('recall_import_transcript', {
+  description: 'Import a full session transcript from a Claude session JSONL file into large.md. Use this at the end of a session to save the complete conversation history.',
+  inputSchema: z.object({
+    sessionFile: z.string().describe('Path to the session JSONL file (e.g., ~/.claude/projects/.../session.jsonl)'),
+    append: z.boolean().optional().describe('Append to existing large.md instead of replacing (default: true)'),
+  }).shape,
+}, async (args) => {
+  const config = loadConfig();
+  if (!config?.token) {
+    return {
+      content: [{ type: 'text', text: 'Not authenticated. Run recall_auth first.' }],
+      isError: true,
+    };
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    return {
+      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      isError: true,
+    };
+  }
+
+  const sessionFile = args.sessionFile as string;
+  const append = args.append !== false; // Default to true
+
+  // Resolve home directory
+  const resolvedPath = sessionFile.replace(/^~/, os.homedir());
+
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      content: [{ type: 'text', text: `Session file not found: ${sessionFile}` }],
+      isError: true,
+    };
+  }
+
+  try {
+    const fileContent = fs.readFileSync(resolvedPath, 'utf-8');
+    const lines = fileContent.trim().split('\n');
+
+    const repoName = getCurrentRepoName() || 'Unknown Repo';
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = now.toTimeString().split(' ')[0];
+
+    // Parse JSONL and format as readable transcript
+    let transcript = `\n## Session Transcript: ${dateStr} ${timeStr}\n\n`;
+    let messageCount = 0;
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const entry = JSON.parse(line);
+
+        // Handle different JSONL formats Claude might use
+        if (entry.type === 'human' || entry.role === 'user') {
+          const content = entry.content || entry.message || entry.text || '';
+          if (content) {
+            transcript += `**User:**\n${content}\n\n`;
+            messageCount++;
+          }
+        } else if (entry.type === 'assistant' || entry.role === 'assistant') {
+          const content = entry.content || entry.message || entry.text || '';
+          if (content) {
+            transcript += `**Assistant:**\n${content}\n\n`;
+            messageCount++;
+          }
+        } else if (entry.message) {
+          // Generic message format
+          const role = entry.role || entry.type || 'unknown';
+          transcript += `**${role}:**\n${entry.message}\n\n`;
+          messageCount++;
+        }
+      } catch {
+        // Skip malformed lines
+        continue;
+      }
+    }
+
+    transcript += `---\n_Imported ${messageCount} messages from ${path.basename(sessionFile)}_\n\n`;
+
+    // Read existing large.md if appending
+    let largeContent = '';
+    if (append) {
+      largeContent = readRecallFile('large.md', teamKey.key) || `# ${repoName} - Full Session Transcripts\n`;
+    } else {
+      largeContent = `# ${repoName} - Full Session Transcripts\n`;
+    }
+
+    largeContent += transcript;
+
+    // Write encrypted large.md
+    writeRecallFile('large.md', largeContent, teamKey.key);
+
+    // Log access
+    logMemoryAccess(config.token, 'large', 'write');
+
+    return {
+      content: [{ type: 'text', text: `Imported ${messageCount} messages from session transcript.\n\nSaved to .recall/large.md (encrypted).` }],
+    };
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `Failed to import transcript: ${error instanceof Error ? error.message : 'Unknown error'}` }],
+      isError: true,
+    };
+  }
+});
+
+// Tool: recall_import_all_sessions - Import ALL session transcripts to large.md
+server.registerTool('recall_import_all_sessions', {
+  description: 'Import ALL Claude session transcripts for this project into large.md. This finds every JSONL session file and imports them as readable markdown.',
+  inputSchema: z.object({
+    projectPath: z.string().optional().describe('Optional: explicit path to the project root. If not provided, uses current working directory.'),
+  }).shape,
+}, async (args) => {
+  const config = loadConfig();
+  if (!config?.token) {
+    return {
+      content: [{ type: 'text', text: 'Not authenticated. Run recall_auth first.' }],
+      isError: true,
+    };
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    return {
+      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      isError: true,
+    };
+  }
+
+  const projectPath = args.projectPath as string | undefined;
+  const cwd = projectPath || process.cwd();
+  const repoName = getCurrentRepoName() || path.basename(cwd);
+
+  console.error(`[Recall] recall_import_all_sessions called`);
+  console.error(`[Recall]   cwd: ${cwd}`);
+
+  // Find all session files
+  const sessionFiles = findAllSessionFiles();
+
+  if (sessionFiles.length === 0) {
+    return {
+      content: [{ type: 'text', text: `No session files found for this project.\n\nLooking for: ${cwd.replace(/\//g, '-')}\n\nMake sure you're running this from the same directory where you opened Claude.` }],
+    };
+  }
+
+  console.error(`[Recall] Found ${sessionFiles.length} session files to import`);
+
+  // Build the full transcript
+  let largeContent = `# ${repoName} - Full Session Transcripts\n\n`;
+  largeContent += `_Imported ${sessionFiles.length} sessions on ${new Date().toISOString().split('T')[0]}_\n\n`;
+
+  let totalMessages = 0;
+
+  // Process each session file (oldest first for chronological order)
+  const sortedFiles = [...sessionFiles].reverse();
+
+  for (const sessionFile of sortedFiles) {
+    const filename = path.basename(sessionFile);
+    const stat = fs.statSync(sessionFile);
+    const sessionDate = new Date(stat.mtime);
+    const dateStr = sessionDate.toISOString().split('T')[0];
+    const timeStr = sessionDate.toTimeString().split(' ')[0];
+
+    console.error(`[Recall] Processing: ${filename}`);
+
+    largeContent += `---\n\n## Session: ${dateStr} ${timeStr}\n`;
+    largeContent += `_File: ${filename}_\n\n`;
+
+    // Parse and append transcript
+    const transcript = parseSessionTranscript(sessionFile);
+    const messageCount = (transcript.match(/\*\*User:\*\*|\*\*Assistant:\*\*/g) || []).length;
+    totalMessages += messageCount;
+
+    largeContent += transcript;
+    largeContent += `\n_${messageCount} messages_\n\n`;
+  }
+
+  // Write encrypted large.md
+  const recallDir = projectPath
+    ? path.join(projectPath, RECALL_DIR)
+    : getRecallDir();
+
+  ensureRecallDir();
+  const largePath = path.join(recallDir, 'large.md');
+  const encrypted = encrypt(largeContent, teamKey.key);
+  fs.writeFileSync(largePath, encrypted);
+
+  // Log access
+  logMemoryAccess(config.token, 'large', 'write');
+
+  return {
+    content: [{ type: 'text', text: `Imported ${sessionFiles.length} sessions (${totalMessages} total messages) to large.md.\n\nSessions imported:\n${sortedFiles.map(f => `  - ${path.basename(f)}`).join('\n')}\n\nSaved to: ${recallDir}/large.md (encrypted)` }],
+  };
 });
 
 // Tool: recall_save_session - Save session summary
@@ -867,7 +1358,7 @@ server.registerTool('recall_status', {
 
 // Tool: recall_init - Initialize Recall for current repo
 server.registerTool('recall_init', {
-  description: 'Initialize Recall for the current repository. Creates .recall/ folder and adds instructions to CLAUDE.md so team memory loads automatically.',
+  description: 'Initialize Recall for the current repository. Finds the current session, imports full transcript to large.md, and generates AI summaries for small.md and medium.md.',
 }, async () => {
   const config = loadConfig();
   if (!config?.token) {
@@ -887,7 +1378,7 @@ server.registerTool('recall_init', {
 
   const repoName = getCurrentRepoName() || path.basename(process.cwd());
   const recallDir = getRecallDir();
-  const alreadyExists = fs.existsSync(recallDir);
+  const dateStr = new Date().toISOString().split('T')[0];
 
   // Create .recall/ directory and README
   ensureRecallDir();
@@ -902,33 +1393,62 @@ server.registerTool('recall_init', {
     };
   }
 
-  // Create initial small.md if it doesn't exist
-  const smallPath = path.join(recallDir, 'small.md');
-  if (!fs.existsSync(smallPath)) {
-    const initialContent = `# ${repoName} - Team Context
+  // Find and import session transcript
+  const sessionFile = findSessionFile();
+  let transcript = '';
+  let messageCount = 0;
 
-Last updated: ${new Date().toISOString().split('T')[0]}
-
-## Current Status
-
-Repository initialized with Recall. Save your first session to start building team memory.
-
-## Next Steps
-
-Use \`recall_save_session\` to save what you accomplish in each session.
-`;
-    writeRecallFile('small.md', initialContent, teamKey.key);
+  if (sessionFile) {
+    console.error(`[Recall] Importing session from: ${sessionFile}`);
+    transcript = parseSessionTranscript(sessionFile);
+    messageCount = (transcript.match(/\*\*User:\*\*|\*\*Assistant:\*\*/g) || []).length;
   }
 
-  if (alreadyExists) {
+  // Generate AI summaries if we have a transcript
+  let smallContent = '';
+  let mediumContent = '';
+  let largeContent = '';
+
+  if (transcript) {
+    // Save full transcript to large.md
+    largeContent = `# ${repoName} - Full Session Transcripts\n\n## Session: ${dateStr}\n\n${transcript}`;
+    writeRecallFile('large.md', largeContent, teamKey.key);
+    console.error(`[Recall] Saved ${messageCount} messages to large.md`);
+
+    // Call Gemini API for summaries
+    const summaries = await generateSummaries(config.token, transcript, repoName);
+
+    if (summaries) {
+      smallContent = summaries.small;
+      mediumContent = summaries.medium;
+      console.error('[Recall] AI summaries generated');
+    } else {
+      // Fallback to template if API fails
+      console.error('[Recall] AI summarization failed, using template');
+      smallContent = `# ${repoName} - Team Context\n\nLast updated: ${dateStr}\n\n## Current Status\n\nSession imported with ${messageCount} messages. AI summarization pending.\n\n## Next Steps\n\nReview the full transcript in large.md.\n`;
+      mediumContent = `# ${repoName} - Session History\n\n## ${dateStr}\n\nImported ${messageCount} messages from session.\n\nFull transcript available in large.md.\n`;
+    }
+
+    writeRecallFile('small.md', smallContent, teamKey.key);
+    writeRecallFile('medium.md', mediumContent, teamKey.key);
+
+    // Log activity
+    logMemoryAccess(config.token, 'small', 'write');
+    logMemoryAccess(config.token, 'medium', 'write');
+    logMemoryAccess(config.token, 'large', 'write');
+
     return {
-      content: [{ type: 'text', text: `Recall already initialized for ${repoName}.\n\nUpdated CLAUDE.md with team memory instructions.\n\nNext: Use recall_save_session to save your work.` }],
+      content: [{ type: 'text', text: `Recall initialized for ${repoName}!\n\nImported ${messageCount} messages from current session.\n\nCreated:\n- large.md: Full session transcript (${messageCount} messages)\n- medium.md: Detailed summary (AI-generated)\n- small.md: Quick context (AI-generated)\n- CLAUDE.md: Auto-load instructions\n\nYour team will now automatically get context when opening this project.` }],
+    };
+  } else {
+    // No session file found - create placeholder
+    smallContent = `# ${repoName} - Team Context\n\nLast updated: ${dateStr}\n\n## Current Status\n\nRepository initialized with Recall. No session transcript found to import.\n\n## Next Steps\n\nUse \`recall_save_session\` to save what you accomplish in each session.\n`;
+    writeRecallFile('small.md', smallContent, teamKey.key);
+
+    return {
+      content: [{ type: 'text', text: `Recall initialized for ${repoName}.\n\nNo session transcript found to import. Created placeholder files.\n\nCreated:\n- .recall/ folder for encrypted team memory\n- CLAUDE.md with auto-load instructions\n\nNext: Use recall_save_session to save your work.` }],
     };
   }
-
-  return {
-    content: [{ type: 'text', text: `Recall initialized for ${repoName}!\n\nCreated:\n- .recall/ folder for encrypted team memory\n- CLAUDE.md with auto-load instructions\n\nYour team will now automatically get context when opening this project.\n\nNext: Use recall_save_session to save your first session.` }],
-  };
 });
 
 /**
@@ -943,20 +1463,15 @@ function createProjectClaudeMd(): void {
   const recallInstructions = `<!-- RECALL:START -->
 ## Recall Team Memory
 
-**CRITICAL: This project uses Recall for team memory. Always load context first.**
+**ON SESSION START:** Call \`recall_get_context\` IMMEDIATELY to load team memory.
 
-When starting a session in this project:
-1. Call \`recall_get_context\` IMMEDIATELY to load team memory
-2. Use this context to understand recent work, decisions, and blockers
+**HOTWORD RULES - CALL EXACTLY ONE TOOL:**
+- "remember" → Call \`recall_get_history\` ONLY (NOT recall_get_context, NOT recall_get_transcripts)
+- "ultraremember" → Call \`recall_get_transcripts\` ONLY (NOT recall_get_history, NOT recall_get_context)
 
-Hotwords:
-- "remember" → Call \`recall_get_history\` for detailed session history
-- "ultraremember" → Load full transcripts (large context)
+**CRITICAL:** Each hotword triggers exactly ONE recall tool. Never stack or combine them.
 
-Before ending a session:
-- Call \`recall_save_session\` to save what was accomplished
-
-This ensures your team always has context about this codebase.
+**ON SESSION END:** Call \`recall_save_session\` to save what was accomplished.
 <!-- RECALL:END -->
 `;
 
@@ -1018,22 +1533,24 @@ function checkProjectRecallSetup(): void {
 
 /**
  * Get the MCP config file path for the current platform/tool
- * Priority: Claude Code (~/.mcp.json) > Cursor (~/.cursor/mcp.json) > Windsurf
+ * Priority: Claude Code (~/.claude/mcp.json) > Legacy (~/.mcp.json) > Cursor > Windsurf
  */
 function getMcpConfigPath(): string {
   const home = os.homedir();
 
   // Check which config files exist
-  const claudeConfig = path.join(home, '.mcp.json');
+  const claudeConfig = path.join(home, '.claude', 'mcp.json');  // New Claude Code location
+  const legacyClaudeConfig = path.join(home, '.mcp.json');       // Old Claude Code location
   const cursorConfig = path.join(home, '.cursor', 'mcp.json');
   const windsurfConfig = path.join(home, '.codeium', 'windsurf', 'mcp.json');
 
   // If any exist, use the first one found
   if (fs.existsSync(claudeConfig)) return claudeConfig;
+  if (fs.existsSync(legacyClaudeConfig)) return legacyClaudeConfig;
   if (fs.existsSync(cursorConfig)) return cursorConfig;
   if (fs.existsSync(windsurfConfig)) return windsurfConfig;
 
-  // Default to Claude Code config
+  // Default to new Claude Code config location
   return claudeConfig;
 }
 
@@ -1054,13 +1571,13 @@ function setupClaudeInstructions(): void {
 ## Recall Team Memory (MANDATORY)
 
 **ON SESSION START - ALWAYS DO THIS FIRST:**
-Call \`recall_get_context\` to load team memory (small.md). Do this before responding to any user request.
+Call \`recall_get_context\` to load team memory. Do this before responding to any user request.
 
-**HOTWORD RULES (exact word match required):**
-- User says "remember" → Call \`recall_get_history\` (loads medium.md ONLY, not large.md)
-- User says "ultraremember" → Read \`recall://transcripts\` (loads large.md)
+**HOTWORD RULES - CALL EXACTLY ONE TOOL:**
+- "remember" → Call \`recall_get_history\` ONLY (do NOT also call recall_get_context)
+- "ultraremember" → Call \`recall_get_transcripts\` ONLY (do NOT also call recall_get_history)
 
-**IMPORTANT:** "remember" means ONLY medium.md. Do NOT load large.md unless user specifically says "ultraremember".
+**CRITICAL:** Each hotword = exactly ONE tool call. Never combine or stack recall tools.
 
 **AT SESSION END:**
 Use \`recall_save_session\` to save what was accomplished.
