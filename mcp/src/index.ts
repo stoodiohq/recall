@@ -267,15 +267,253 @@ function getCurrentRepoName(): string | null {
   return path.basename(process.cwd());
 }
 
-// Create the MCP server
+// Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.1.0',
+  version: '0.2.2',
 }, {
   capabilities: {
     tools: {},
+    resources: {},
+    prompts: {},
   },
 });
+
+// Prompt: recall-context - Injected team memory for this repo
+// This prompt is designed to be auto-loaded on session start
+server.registerPrompt(
+  'recall-context',
+  {
+    description: 'Team memory context for this repository. Use this at the start of every session.',
+  },
+  async () => {
+    const config = loadConfig();
+    if (!config?.token) {
+      return {
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: '[Recall: Not configured - run recall_auth to set up team memory]',
+          },
+        }],
+      };
+    }
+
+    const teamKey = await getTeamKey(config.token);
+    if (!teamKey?.hasAccess) {
+      return {
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `[Recall: ${teamKey?.message || 'Subscription required - visit https://recall.team/dashboard'}]`,
+          },
+        }],
+      };
+    }
+
+    const smallContent = readRecallFile('small.md', teamKey.key);
+    const repoName = getCurrentRepoName();
+
+    // Log access (non-blocking)
+    logMemoryAccess(config.token, 'small', 'read');
+
+    if (!smallContent) {
+      return {
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `[Recall: No team memory for ${repoName} yet. Use recall_save_session to save your first session.]`,
+          },
+        }],
+      };
+    }
+
+    return {
+      messages: [{
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `<team-memory>\n${smallContent}\n</team-memory>`,
+        },
+      }],
+    };
+  }
+);
+
+// Resource: recall://context - Auto-loaded team memory (small.md)
+// This is the core value prop - always loaded on session start
+server.registerResource(
+  'context',
+  'recall://context',
+  {
+    description: 'Team memory context for this repository. Auto-loaded on session start.',
+    mimeType: 'text/markdown',
+  },
+  async () => {
+    const config = loadConfig();
+    if (!config?.token) {
+      return {
+        contents: [{
+          uri: 'recall://context',
+          mimeType: 'text/markdown',
+          text: '# Recall Not Configured\n\nRun `recall_auth` with your token from https://recall.team/dashboard',
+        }],
+      };
+    }
+
+    const teamKey = await getTeamKey(config.token);
+    if (!teamKey?.hasAccess) {
+      return {
+        contents: [{
+          uri: 'recall://context',
+          mimeType: 'text/markdown',
+          text: `# Recall Access Required\n\n${teamKey?.message || 'Check your subscription at https://recall.team/dashboard'}`,
+        }],
+      };
+    }
+
+    const smallContent = readRecallFile('small.md', teamKey.key);
+    const repoName = getCurrentRepoName();
+
+    // Log access (non-blocking)
+    logMemoryAccess(config.token, 'small', 'read');
+
+    if (!smallContent) {
+      return {
+        contents: [{
+          uri: 'recall://context',
+          mimeType: 'text/markdown',
+          text: `# ${repoName} - No Memory Yet\n\nThis is a new repository with no team memory.\n\nUse \`recall_save_session\` to save your first session.`,
+        }],
+      };
+    }
+
+    return {
+      contents: [{
+        uri: 'recall://context',
+        mimeType: 'text/markdown',
+        text: smallContent,
+      }],
+    };
+  }
+);
+
+// Resource: recall://history - Session history (medium.md)
+// Loaded when user says "remember" or asks for more context
+server.registerResource(
+  'history',
+  'recall://history',
+  {
+    description: 'Detailed session history. Load this when you need more context about past work.',
+    mimeType: 'text/markdown',
+  },
+  async () => {
+    const config = loadConfig();
+    if (!config?.token) {
+      return {
+        contents: [{
+          uri: 'recall://history',
+          mimeType: 'text/markdown',
+          text: '# Recall Not Configured\n\nRun `recall_auth` with your token.',
+        }],
+      };
+    }
+
+    const teamKey = await getTeamKey(config.token);
+    if (!teamKey?.hasAccess) {
+      return {
+        contents: [{
+          uri: 'recall://history',
+          mimeType: 'text/markdown',
+          text: '# Recall Access Required\n\nCheck your subscription.',
+        }],
+      };
+    }
+
+    const mediumContent = readRecallFile('medium.md', teamKey.key);
+
+    // Log access (non-blocking)
+    logMemoryAccess(config.token, 'medium', 'read');
+
+    if (!mediumContent) {
+      return {
+        contents: [{
+          uri: 'recall://history',
+          mimeType: 'text/markdown',
+          text: '# No Session History\n\nNo sessions have been saved yet.',
+        }],
+      };
+    }
+
+    return {
+      contents: [{
+        uri: 'recall://history',
+        mimeType: 'text/markdown',
+        text: mediumContent,
+      }],
+    };
+  }
+);
+
+// Resource: recall://transcripts - Full transcripts (large.md)
+// Loaded when user says "ultraremember" or needs complete history
+server.registerResource(
+  'transcripts',
+  'recall://transcripts',
+  {
+    description: 'Complete session transcripts. Large context - only load when you need full details.',
+    mimeType: 'text/markdown',
+  },
+  async () => {
+    const config = loadConfig();
+    if (!config?.token) {
+      return {
+        contents: [{
+          uri: 'recall://transcripts',
+          mimeType: 'text/markdown',
+          text: '# Recall Not Configured',
+        }],
+      };
+    }
+
+    const teamKey = await getTeamKey(config.token);
+    if (!teamKey?.hasAccess) {
+      return {
+        contents: [{
+          uri: 'recall://transcripts',
+          mimeType: 'text/markdown',
+          text: '# Recall Access Required',
+        }],
+      };
+    }
+
+    const largeContent = readRecallFile('large.md', teamKey.key);
+
+    // Log access (non-blocking)
+    logMemoryAccess(config.token, 'large', 'read');
+
+    if (!largeContent) {
+      return {
+        contents: [{
+          uri: 'recall://transcripts',
+          mimeType: 'text/markdown',
+          text: '# No Transcripts\n\nNo full transcripts saved yet.',
+        }],
+      };
+    }
+
+    return {
+      contents: [{
+        uri: 'recall://transcripts',
+        mimeType: 'text/markdown',
+        text: largeContent,
+      }],
+    };
+  }
+);
 
 // Tool: recall_auth - Authenticate with Recall
 server.registerTool('recall_auth', {
@@ -642,6 +880,56 @@ function getMcpConfigPath(): string {
 }
 
 /**
+ * Add Recall instructions to user's CLAUDE.md for auto-loading context
+ */
+function setupClaudeInstructions(): void {
+  const claudeDir = path.join(os.homedir(), '.claude');
+  const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
+
+  // Ensure .claude directory exists
+  if (!fs.existsSync(claudeDir)) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+  }
+
+  const recallInstructions = `
+<!-- RECALL:START -->
+## Recall Team Memory
+
+At the START of every coding session, automatically read the team memory by using the \`recall-context\` prompt or reading the \`recall://context\` resource. This provides context about what the team has been working on.
+
+**Hot words for more context:**
+- When user says "remember" - load session history via \`recall://history\` or \`recall_get_history\`
+- When user says "ultraremember" - load full transcripts via \`recall://transcripts\`
+
+**At the END of sessions:**
+- Use \`recall_save_session\` to save what was accomplished
+
+This ensures team knowledge is preserved and shared across all team members.
+<!-- RECALL:END -->
+`;
+
+  let existingContent = '';
+  if (fs.existsSync(claudeMdPath)) {
+    existingContent = fs.readFileSync(claudeMdPath, 'utf-8');
+
+    // Check if Recall section already exists
+    if (existingContent.includes('<!-- RECALL:START -->')) {
+      // Update existing section
+      existingContent = existingContent.replace(
+        /<!-- RECALL:START -->[\s\S]*?<!-- RECALL:END -->/,
+        recallInstructions.trim()
+      );
+      fs.writeFileSync(claudeMdPath, existingContent);
+      return;
+    }
+  }
+
+  // Append Recall instructions
+  const newContent = existingContent + recallInstructions;
+  fs.writeFileSync(claudeMdPath, newContent);
+}
+
+/**
  * Install Recall MCP server into the user's MCP config
  */
 async function installRecall(token: string): Promise<void> {
@@ -709,6 +997,15 @@ async function installRecall(token: string): Promise<void> {
   fs.writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2));
   console.log(`✓ Added recall to ${configPath}`);
 
+  // Setup Claude instructions for auto-loading
+  console.log('Setting up auto-context loading...');
+  try {
+    setupClaudeInstructions();
+    console.log(`✓ Added Recall instructions to ~/.claude/CLAUDE.md`);
+  } catch (error) {
+    console.log(`⚠ Could not update CLAUDE.md: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+
   // Ping the API to register connection
   console.log('Registering connection...');
   try {
@@ -721,9 +1018,15 @@ async function installRecall(token: string): Promise<void> {
   console.log(`
 ✅ Recall installed successfully!
 
+What happens now:
+• Team memory (small.md) loads automatically at session start
+• Say "remember" to load session history (medium.md)
+• Say "ultraremember" for full transcripts (large.md)
+• All reads are tracked in your team dashboard
+
 Next steps:
 1. Restart your AI coding tool (Claude Code, Cursor, or Windsurf)
-2. The recall tools will be available automatically
+2. Start a new session - your team memory will load automatically
 
 Need help? Visit https://recall.team/docs
 `);
