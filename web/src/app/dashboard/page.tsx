@@ -110,6 +110,39 @@ function DashboardContent() {
   }, [user]);
 
   const [initializingRepos, setInitializingRepos] = useState<Set<string>>(new Set());
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+
+  const handleCreateInvite = async () => {
+    const token = getToken();
+    if (!token) return;
+
+    setCreatingInvite(true);
+
+    try {
+      const response = await fetch(`${API_URL}/teams/invite`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setInviteUrl(data.url);
+      } else {
+        const error = await response.json();
+        alert(error.error || 'Failed to create invite');
+      }
+    } catch (error) {
+      console.error('Failed to create invite:', error);
+      alert('Failed to create invite');
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
 
   const handleDisconnectRepo = async (repoId: string) => {
     const token = getToken();
@@ -288,7 +321,54 @@ function DashboardContent() {
 
           {/* Team & Profile Card */}
           <div className="bg-bg-elevated border border-border-subtle rounded-lg p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Team & Profile</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-text-primary">Team & Profile</h2>
+              {user.team && (user.team.role === 'owner' || user.team.role === 'admin') && (
+                <button
+                  onClick={handleCreateInvite}
+                  disabled={creatingInvite}
+                  className="text-sm text-accent-primary hover:underline disabled:opacity-50"
+                >
+                  {creatingInvite ? 'Creating...' : '+ Invite Member'}
+                </button>
+              )}
+            </div>
+
+            {/* Invite Link Modal */}
+            {inviteUrl && (
+              <div className="mb-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-green-400 font-medium text-sm">Invite Link Created!</span>
+                  <button
+                    onClick={() => setInviteUrl(null)}
+                    className="text-text-tertiary hover:text-text-primary"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-text-secondary text-xs mb-2">Share this link with your team member:</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={inviteUrl}
+                    className="flex-1 bg-bg-base border border-border-subtle rounded px-3 py-2 text-xs text-text-primary"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(inviteUrl);
+                    }}
+                    className="bg-text-primary text-bg-base px-3 py-2 rounded text-xs font-medium hover:opacity-90"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-text-tertiary text-xs mt-2">Expires in 7 days</p>
+              </div>
+            )}
+
             {user.team ? (
               <div className="space-y-4">
                 <div>
@@ -338,16 +418,31 @@ function DashboardContent() {
           {/* MCP Integration Status Card */}
           <div className="bg-bg-elevated border border-border-subtle rounded-lg p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">AI Tool Integration</h2>
-            <div className="flex items-start gap-3 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
-              <svg className="w-5 h-5 text-cyan-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <p className="text-cyan-400 font-medium text-sm">Coming Soon</p>
-                <p className="text-text-secondary text-sm mt-1">
-                  MCP server integration for Claude Code, Cursor, and Windsurf is in development.
-                  You&apos;ll get an email when it&apos;s ready.
-                </p>
+            <div className="space-y-4">
+              <p className="text-text-secondary text-sm">
+                Add Recall to your AI coding tool to get team memory in every session.
+              </p>
+
+              <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-text-primary font-medium text-sm">Claude Code</span>
+                  <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">Ready</span>
+                </div>
+                <p className="text-text-tertiary text-xs mb-3">Add to your claude_desktop_config.json:</p>
+                <pre className="bg-bg-elevated p-3 rounded text-xs text-text-secondary overflow-x-auto">
+{`"recall": {
+  "command": "npx",
+  "args": ["-y", "@recall/mcp-server"]
+}`}
+                </pre>
+              </div>
+
+              <div className="bg-bg-base border border-border-subtle rounded-lg p-4 opacity-60">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-text-primary font-medium text-sm">Cursor & Windsurf</span>
+                  <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Coming Soon</span>
+                </div>
+                <p className="text-text-tertiary text-xs">MCP support for Cursor and Windsurf is in development.</p>
               </div>
             </div>
           </div>

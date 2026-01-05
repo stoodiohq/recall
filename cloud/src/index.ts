@@ -1605,6 +1605,294 @@ app.get('/teams/me', async (c) => {
 });
 
 // ============================================================
+// Team Invite endpoints (Magic Links)
+// ============================================================
+
+// Create an invite link
+app.post('/teams/invite', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team and verify they can invite (owner or admin)
+  const membership = await c.env.DB.prepare(`
+    SELECT t.*, tm.role
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ? AND tm.role IN ('owner', 'admin')
+    LIMIT 1
+  `).bind(user.id).first<Team & { role: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'You must be a team owner or admin to invite members' }, 403);
+  }
+
+  // Check seat availability
+  const memberCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM team_members WHERE team_id = ?
+  `).bind(membership.id).first<{ count: number }>();
+
+  const seatsUsed = memberCount?.count || 0;
+  if (seatsUsed >= membership.seats) {
+    return c.json({
+      error: 'No seats available',
+      message: `Your team is using all ${membership.seats} seats. Upgrade your plan to add more members.`,
+      seatsUsed,
+      seats: membership.seats,
+    }, 403);
+  }
+
+  const body = await c.req.json<{ email?: string; role?: string }>().catch(() => ({}));
+  const inviteRole = body.role === 'admin' ? 'admin' : 'member';
+
+  // Generate unique invite code
+  const code = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+  const inviteId = generateId();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+  await c.env.DB.prepare(`
+    INSERT INTO team_invites (id, team_id, code, email, invited_by, role, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    inviteId,
+    membership.id,
+    code,
+    body.email || null,
+    user.id,
+    inviteRole,
+    expiresAt.toISOString(),
+    now.toISOString()
+  ).run();
+
+  const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+  const inviteUrl = `${baseUrl}/invite?code=${code}`;
+
+  return c.json({
+    code,
+    url: inviteUrl,
+    email: body.email || null,
+    role: inviteRole,
+    expiresAt: expiresAt.toISOString(),
+    seatsRemaining: membership.seats - seatsUsed - 1,
+  });
+});
+
+// Get invite details (public - for showing invite page)
+app.get('/invites/:code', async (c) => {
+  const code = c.req.param('code');
+
+  const invite = await c.env.DB.prepare(`
+    SELECT i.*, t.name as team_name, t.slug as team_slug, u.name as invited_by_name
+    FROM team_invites i
+    JOIN teams t ON t.id = i.team_id
+    JOIN users u ON u.id = i.invited_by
+    WHERE i.code = ?
+  `).bind(code).first<{
+    id: string;
+    team_id: string;
+    team_name: string;
+    team_slug: string;
+    invited_by_name: string;
+    email: string | null;
+    role: string;
+    expires_at: string;
+    accepted_at: string | null;
+  }>();
+
+  if (!invite) {
+    return c.json({ error: 'Invite not found' }, 404);
+  }
+
+  if (invite.accepted_at) {
+    return c.json({ error: 'This invite has already been used' }, 400);
+  }
+
+  if (new Date(invite.expires_at) < new Date()) {
+    return c.json({ error: 'This invite has expired' }, 400);
+  }
+
+  return c.json({
+    valid: true,
+    teamName: invite.team_name,
+    teamSlug: invite.team_slug,
+    invitedBy: invite.invited_by_name,
+    role: invite.role,
+    email: invite.email,
+    expiresAt: invite.expires_at,
+  });
+});
+
+// Accept an invite (requires auth)
+app.post('/invites/:code/accept', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized - Please sign in first' }, 401);
+  }
+
+  const code = c.req.param('code');
+
+  const invite = await c.env.DB.prepare(`
+    SELECT i.*, t.seats
+    FROM team_invites i
+    JOIN teams t ON t.id = i.team_id
+    WHERE i.code = ?
+  `).bind(code).first<{
+    id: string;
+    team_id: string;
+    email: string | null;
+    role: string;
+    expires_at: string;
+    accepted_at: string | null;
+    seats: number;
+  }>();
+
+  if (!invite) {
+    return c.json({ error: 'Invite not found' }, 404);
+  }
+
+  if (invite.accepted_at) {
+    return c.json({ error: 'This invite has already been used' }, 400);
+  }
+
+  if (new Date(invite.expires_at) < new Date()) {
+    return c.json({ error: 'This invite has expired' }, 400);
+  }
+
+  // Check if invite is for specific email
+  if (invite.email && invite.email.toLowerCase() !== user.email.toLowerCase()) {
+    return c.json({
+      error: 'This invite is for a different email address',
+      expected: invite.email,
+    }, 403);
+  }
+
+  // Check if user is already in a team
+  const existingMembership = await c.env.DB.prepare(`
+    SELECT team_id FROM team_members WHERE user_id = ?
+  `).bind(user.id).first();
+
+  if (existingMembership) {
+    return c.json({ error: 'You are already a member of a team' }, 400);
+  }
+
+  // Check seat availability one more time
+  const memberCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM team_members WHERE team_id = ?
+  `).bind(invite.team_id).first<{ count: number }>();
+
+  if ((memberCount?.count || 0) >= invite.seats) {
+    return c.json({ error: 'No seats available in this team' }, 403);
+  }
+
+  const now = new Date().toISOString();
+
+  // Add user to team and mark invite as used
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      INSERT INTO team_members (team_id, user_id, role, joined_at)
+      VALUES (?, ?, ?, ?)
+    `).bind(invite.team_id, user.id, invite.role, now),
+
+    c.env.DB.prepare(`
+      UPDATE team_invites SET accepted_at = ?, accepted_by = ? WHERE id = ?
+    `).bind(now, user.id, invite.id),
+  ]);
+
+  // Get team info for response
+  const team = await c.env.DB.prepare(`
+    SELECT * FROM teams WHERE id = ?
+  `).bind(invite.team_id).first<Team>();
+
+  return c.json({
+    success: true,
+    message: `You've joined ${team?.name || 'the team'}!`,
+    team: team ? {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      tier: team.tier,
+    } : null,
+  });
+});
+
+// List team invites (for team admins)
+app.get('/teams/invites', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ? AND tm.role IN ('owner', 'admin')
+    LIMIT 1
+  `).bind(user.id).first<{ id: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'Not authorized' }, 403);
+  }
+
+  const result = await c.env.DB.prepare(`
+    SELECT i.*, u.name as invited_by_name, a.name as accepted_by_name
+    FROM team_invites i
+    JOIN users u ON u.id = i.invited_by
+    LEFT JOIN users a ON a.id = i.accepted_by
+    WHERE i.team_id = ?
+    ORDER BY i.created_at DESC
+    LIMIT 50
+  `).bind(membership.id).all();
+
+  const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+
+  return c.json({
+    invites: (result.results || []).map((i: Record<string, unknown>) => ({
+      id: i.id,
+      code: i.code,
+      url: `${baseUrl}/invite/${i.code}`,
+      email: i.email,
+      role: i.role,
+      invitedBy: i.invited_by_name,
+      acceptedBy: i.accepted_by_name,
+      expiresAt: i.expires_at,
+      acceptedAt: i.accepted_at,
+      createdAt: i.created_at,
+      isActive: !i.accepted_at && new Date(i.expires_at as string) > new Date(),
+    })),
+  });
+});
+
+// Revoke an invite
+app.delete('/invites/:code', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const code = c.req.param('code');
+
+  // Verify user owns the team that created this invite
+  const invite = await c.env.DB.prepare(`
+    SELECT i.id, i.team_id
+    FROM team_invites i
+    JOIN team_members tm ON tm.team_id = i.team_id
+    WHERE i.code = ? AND tm.user_id = ? AND tm.role IN ('owner', 'admin')
+  `).bind(code, user.id).first<{ id: string; team_id: string }>();
+
+  if (!invite) {
+    return c.json({ error: 'Invite not found or not authorized' }, 404);
+  }
+
+  await c.env.DB.prepare(`
+    DELETE FROM team_invites WHERE id = ?
+  `).bind(invite.id).run();
+
+  return c.json({ success: true });
+});
+
+// ============================================================
 // Encryption Key endpoints
 // ============================================================
 
