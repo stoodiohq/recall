@@ -20,6 +20,13 @@ interface EnabledRepo {
   id: string;
   githubRepoId: number;
   fullName: string;
+  name: string;
+  private: boolean;
+  description: string | null;
+  language: string | null;
+  enabledBy: string | null;
+  enabledByName: string | null;
+  canToggle: boolean;
 }
 
 export default function ReposPage() {
@@ -94,17 +101,50 @@ export default function ReposPage() {
     });
   };
 
+  // Combine GitHub repos with team repos (showing team repos not in user's GitHub)
+  const allRepos = useMemo(() => {
+    const githubRepoIds = new Set(githubRepos.map(r => r.id));
+
+    // Team repos that aren't in user's GitHub (added by other team members)
+    const teamOnlyRepos = enabledRepos
+      .filter(r => !githubRepoIds.has(r.githubRepoId))
+      .map(r => ({
+        id: r.githubRepoId,
+        name: r.name || r.fullName.split('/')[1],
+        fullName: r.fullName,
+        private: r.private,
+        description: r.description,
+        language: r.language,
+        isTeamRepo: true,
+        enabledByName: r.enabledByName,
+        canToggle: r.canToggle,
+      }));
+
+    // User's GitHub repos with team info
+    const userRepos = githubRepos.map(r => {
+      const teamRepo = enabledRepos.find(tr => tr.githubRepoId === r.id);
+      return {
+        ...r,
+        isTeamRepo: false,
+        enabledByName: teamRepo?.enabledByName || null,
+        canToggle: teamRepo ? teamRepo.canToggle : true,
+      };
+    });
+
+    return [...userRepos, ...teamOnlyRepos];
+  }, [githubRepos, enabledRepos]);
+
   // Filter repos based on search query
   const filteredRepos = useMemo(() => {
-    if (!searchQuery.trim()) return githubRepos;
+    if (!searchQuery.trim()) return allRepos;
     const query = searchQuery.toLowerCase();
-    return githubRepos.filter(repo =>
+    return allRepos.filter(repo =>
       repo.fullName.toLowerCase().includes(query) ||
       repo.name.toLowerCase().includes(query) ||
       repo.description?.toLowerCase().includes(query) ||
       repo.language?.toLowerCase().includes(query)
     );
-  }, [githubRepos, searchQuery]);
+  }, [allRepos, searchQuery]);
 
   const handleSave = async () => {
     const token = getToken();
@@ -254,21 +294,27 @@ export default function ReposPage() {
           {filteredRepos.map((repo) => {
             const isEnabled = enabledRepos.some(r => r.githubRepoId === repo.id);
             const isSelected = selectedRepos.has(repo.id);
+            const canToggle = repo.canToggle;
+            const isTeamRepo = repo.isTeamRepo;
 
             return (
-              <button
+              <div
                 key={repo.id}
-                onClick={() => toggleRepo(repo.id)}
+                onClick={() => canToggle && toggleRepo(repo.id)}
                 className={`w-full text-left p-4 rounded-lg border transition-all ${
-                  isSelected
-                    ? 'bg-cyan-500/10 border-cyan-500/30'
-                    : 'bg-bg-elevated border-border-subtle hover:border-text-tertiary'
+                  !canToggle
+                    ? 'bg-bg-elevated/50 border-border-subtle cursor-default opacity-75'
+                    : isSelected
+                    ? 'bg-cyan-500/10 border-cyan-500/30 cursor-pointer'
+                    : 'bg-bg-elevated border-border-subtle hover:border-text-tertiary cursor-pointer'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                      isSelected
+                      !canToggle
+                        ? 'border-text-tertiary/50 bg-bg-base'
+                        : isSelected
                         ? 'bg-cyan-500 border-cyan-500'
                         : 'border-text-tertiary'
                     }`}>
@@ -279,9 +325,21 @@ export default function ReposPage() {
                       )}
                     </div>
                     <div>
-                      <p className="text-text-primary font-medium">{repo.fullName}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-text-primary font-medium">{repo.fullName}</p>
+                        {isTeamRepo && (
+                          <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">
+                            Team
+                          </span>
+                        )}
+                      </div>
                       {repo.description && (
                         <p className="text-text-tertiary text-sm mt-0.5 line-clamp-1">{repo.description}</p>
+                      )}
+                      {isEnabled && repo.enabledByName && !canToggle && (
+                        <p className="text-text-tertiary text-xs mt-1">
+                          Added by {repo.enabledByName}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -299,12 +357,12 @@ export default function ReposPage() {
                     )}
                     {isEnabled && (
                       <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">
-                        Added
+                        Active
                       </span>
                     )}
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

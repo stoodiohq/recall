@@ -831,12 +831,15 @@ app.get('/repos', async (c) => {
     return c.json({ repos: [] });
   }
 
-  // Get enabled repos
+  // Get enabled repos with enabler info
   const result = await c.env.DB.prepare(`
-    SELECT id, github_repo_id, name, full_name, private, description, language, enabled, enabled_at, last_sync_at, initialized_at
-    FROM repos
-    WHERE team_id = ? AND enabled = 1
-    ORDER BY enabled_at DESC
+    SELECT r.id, r.github_repo_id, r.name, r.full_name, r.private, r.description, r.language,
+           r.enabled, r.enabled_at, r.enabled_by, r.last_sync_at, r.initialized_at,
+           u.name as enabler_name, u.github_username as enabler_github
+    FROM repos r
+    LEFT JOIN users u ON u.id = r.enabled_by
+    WHERE r.team_id = ? AND r.enabled = 1
+    ORDER BY r.enabled_at DESC
   `).bind(membership.id).all();
 
   return c.json({
@@ -850,6 +853,9 @@ app.get('/repos', async (c) => {
       language: r.language,
       enabled: !!r.enabled,
       enabledAt: r.enabled_at,
+      enabledBy: r.enabled_by,
+      enabledByName: r.enabler_name || r.enabler_github,
+      canToggle: r.enabled_by === user.id || !r.enabled_by, // Can toggle if you enabled it or it's unassigned
       lastSyncAt: r.last_sync_at,
       initializedAt: r.initialized_at,
     })),
