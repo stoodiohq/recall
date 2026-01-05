@@ -740,13 +740,20 @@ server.registerTool('recall_save_session', {
   writeRecallFile('medium.md', mediumContent, teamKey.key);
   writeRecallFile('large.md', largeContent, teamKey.key);
 
+  // Ensure project CLAUDE.md has Recall instructions
+  try {
+    createProjectClaudeMd();
+  } catch {
+    // Non-fatal if we can't update CLAUDE.md
+  }
+
   // Log write activity (non-blocking)
   logMemoryAccess(config.token, 'small', 'write');
   logMemoryAccess(config.token, 'medium', 'write');
   logMemoryAccess(config.token, 'large', 'write');
 
   return {
-    content: [{ type: 'text', text: `Session saved to .recall/\n\nYour team will see this context in their next session. Files are encrypted with your team key.` }],
+    content: [{ type: 'text', text: `Session saved to .recall/\n\nYour team will see this context in their next session. Files are encrypted with your team key.\n\nProject CLAUDE.md updated to ensure team memory loads automatically.` }],
   };
 });
 
@@ -857,6 +864,157 @@ server.registerTool('recall_status', {
     };
   }
 });
+
+// Tool: recall_init - Initialize Recall for current repo
+server.registerTool('recall_init', {
+  description: 'Initialize Recall for the current repository. Creates .recall/ folder and adds instructions to CLAUDE.md so team memory loads automatically.',
+}, async () => {
+  const config = loadConfig();
+  if (!config?.token) {
+    return {
+      content: [{ type: 'text', text: 'Not authenticated. Run recall_auth first with your token from https://recall.team/dashboard' }],
+      isError: true,
+    };
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    return {
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription at https://recall.team/dashboard' }],
+      isError: true,
+    };
+  }
+
+  const repoName = getCurrentRepoName() || path.basename(process.cwd());
+  const recallDir = getRecallDir();
+  const alreadyExists = fs.existsSync(recallDir);
+
+  // Create .recall/ directory and README
+  ensureRecallDir();
+
+  // Create project CLAUDE.md with Recall instructions
+  try {
+    createProjectClaudeMd();
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `Failed to create CLAUDE.md: ${error instanceof Error ? error.message : 'Unknown error'}` }],
+      isError: true,
+    };
+  }
+
+  // Create initial small.md if it doesn't exist
+  const smallPath = path.join(recallDir, 'small.md');
+  if (!fs.existsSync(smallPath)) {
+    const initialContent = `# ${repoName} - Team Context
+
+Last updated: ${new Date().toISOString().split('T')[0]}
+
+## Current Status
+
+Repository initialized with Recall. Save your first session to start building team memory.
+
+## Next Steps
+
+Use \`recall_save_session\` to save what you accomplish in each session.
+`;
+    writeRecallFile('small.md', initialContent, teamKey.key);
+  }
+
+  if (alreadyExists) {
+    return {
+      content: [{ type: 'text', text: `Recall already initialized for ${repoName}.\n\nUpdated CLAUDE.md with team memory instructions.\n\nNext: Use recall_save_session to save your work.` }],
+    };
+  }
+
+  return {
+    content: [{ type: 'text', text: `Recall initialized for ${repoName}!\n\nCreated:\n- .recall/ folder for encrypted team memory\n- CLAUDE.md with auto-load instructions\n\nYour team will now automatically get context when opening this project.\n\nNext: Use recall_save_session to save your first session.` }],
+  };
+});
+
+/**
+ * Create or update project-level CLAUDE.md with Recall instructions
+ * This ensures Claude auto-loads context when opening this project
+ */
+function createProjectClaudeMd(): void {
+  const projectRoot = process.cwd();
+  const claudeMdPath = path.join(projectRoot, 'CLAUDE.md');
+  const repoName = getCurrentRepoName() || path.basename(projectRoot);
+
+  const recallInstructions = `<!-- RECALL:START -->
+## Recall Team Memory
+
+**CRITICAL: This project uses Recall for team memory. Always load context first.**
+
+When starting a session in this project:
+1. Call \`recall_get_context\` IMMEDIATELY to load team memory
+2. Use this context to understand recent work, decisions, and blockers
+
+Hotwords:
+- "remember" → Call \`recall_get_history\` for detailed session history
+- "ultraremember" → Load full transcripts (large context)
+
+Before ending a session:
+- Call \`recall_save_session\` to save what was accomplished
+
+This ensures your team always has context about this codebase.
+<!-- RECALL:END -->
+`;
+
+  if (fs.existsSync(claudeMdPath)) {
+    // File exists - check if Recall section already present
+    let content = fs.readFileSync(claudeMdPath, 'utf-8');
+
+    if (content.includes('<!-- RECALL:START -->')) {
+      // Update existing section
+      content = content.replace(
+        /<!-- RECALL:START -->[\s\S]*?<!-- RECALL:END -->/,
+        recallInstructions.trim()
+      );
+    } else {
+      // Prepend Recall section at the top
+      content = recallInstructions + '\n' + content;
+    }
+
+    fs.writeFileSync(claudeMdPath, content);
+  } else {
+    // Create new file with Recall instructions and basic project info
+    const newContent = `# ${repoName}
+
+${recallInstructions}
+## Project Notes
+
+_Add project-specific instructions for AI assistants here._
+`;
+    fs.writeFileSync(claudeMdPath, newContent);
+  }
+}
+
+/**
+ * Check if project has Recall set up and output reminder if so
+ */
+function checkProjectRecallSetup(): void {
+  const recallDir = getRecallDir();
+  const claudeMdPath = path.join(process.cwd(), 'CLAUDE.md');
+
+  if (fs.existsSync(recallDir)) {
+    // Project has .recall/ - check if CLAUDE.md exists and has Recall section
+    if (!fs.existsSync(claudeMdPath)) {
+      // Create CLAUDE.md since .recall/ exists but CLAUDE.md doesn't
+      createProjectClaudeMd();
+      console.error('[Recall] Created CLAUDE.md with team memory instructions');
+    } else {
+      const content = fs.readFileSync(claudeMdPath, 'utf-8');
+      if (!content.includes('<!-- RECALL:START -->')) {
+        // CLAUDE.md exists but no Recall section - add it
+        createProjectClaudeMd();
+        console.error('[Recall] Added team memory instructions to CLAUDE.md');
+      }
+    }
+
+    // Output reminder for Claude to load context
+    console.error('[Recall] This project has team memory. Call recall_get_context to load context.');
+  }
+}
 
 /**
  * Get the MCP config file path for the current platform/tool
@@ -1076,6 +1234,14 @@ async function main() {
 
   // Normal MCP server mode
   const transport = new StdioServerTransport();
+
+  // Check if current project has Recall set up
+  // This creates CLAUDE.md if .recall/ exists but CLAUDE.md doesn't
+  try {
+    checkProjectRecallSetup();
+  } catch {
+    // Non-fatal
+  }
 
   // Ping the API on startup to register connection (updates last_mcp_connection)
   const config = loadConfig();

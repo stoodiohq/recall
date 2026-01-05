@@ -1,5 +1,95 @@
 # Recall - Full Session History
 
+## 2026-01-05: Auto-Context Loading Fix (Sessions 7-9)
+
+### The Problem
+Steven Ray installed Recall, opened Claude in a Recall-enabled project folder, said "summarize this project" - **Recall didn't get called.**
+
+Root cause: MCP tools are opt-in. Claude only calls them when it thinks they're relevant. The global ~/.claude/CLAUDE.md instructions get buried in context and don't reliably trigger Recall.
+
+### The Solution (Published as v0.3.2)
+Two-pronged approach:
+
+1. **Project CLAUDE.md on save/init**
+   - Added `createProjectClaudeMd()` function
+   - Creates/updates CLAUDE.md in project root with Recall instructions
+   - Called from `recall_save_session` and new `recall_init` tool
+   - Instructions say "CRITICAL: call `recall_get_context` immediately"
+
+2. **Startup check for .recall/**
+   - Added `checkProjectRecallSetup()` function
+   - On MCP server startup, if `.recall/` exists:
+     - If no CLAUDE.md → create it
+     - If CLAUDE.md exists but no Recall section → add it
+   - Outputs reminder: `[Recall] This project has team memory. Call recall_get_context`
+
+### The Key Insight
+Claude reads project-level CLAUDE.md automatically on session start. By putting instructions there ("CRITICAL: call recall_get_context"), Claude follows them.
+
+### Steven Ray Test
+1. Deleted Steven from database (again) to test fresh flow
+2. Sent new invite
+3. Steven installed Recall
+4. Opened Claude in Recall-enabled project
+5. Said "What is this project about?"
+6. **Claude called recall_get_context first** - IT WORKED
+
+### Team Features Built This Session
+
+**Team Management Page** (`/dashboard/team`)
+- Invite form: email + role (member/admin)
+- Pending invites list
+- Team members list
+- Remove (from team) / Delete (from system) buttons
+
+**Repos Page Permissions** (`/dashboard/repos`)
+- Shows ALL team repos, not just user's GitHub repos
+- Team repos from other members show purple "Team" badge
+- "Added by [name]" for repos you can't toggle
+- `canToggle` based on who enabled the repo
+
+**Member Deletion Endpoint** (`DELETE /teams/members/:userId`)
+- `fullDelete=true` query param for complete removal
+- Deletes from: memory_access_logs, team_members, api_tokens
+- Clears: team_invites.accepted_by, repos.enabled_by
+- Then deletes from users table
+
+### Database Operations for Steven Ray Deletion
+```sql
+DELETE FROM memory_access_logs WHERE user_id = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+DELETE FROM team_members WHERE user_id = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+DELETE FROM api_tokens WHERE user_id = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+UPDATE team_invites SET accepted_by = NULL WHERE accepted_by = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+UPDATE repos SET enabled_by = NULL WHERE enabled_by = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+DELETE FROM users WHERE id = '1adb8561-e380-4752-b06a-9edd0e21ae18';
+```
+
+### Files Changed
+```
+/mcp/src/index.ts
+  - createProjectClaudeMd() - creates/updates project CLAUDE.md
+  - checkProjectRecallSetup() - startup check for .recall/
+  - recall_init tool - explicit initialization
+  - recall_save_session - now calls createProjectClaudeMd()
+  - main() - calls checkProjectRecallSetup() on startup
+
+/mcp/package.json - v0.3.2
+
+/cloud/src/index.ts
+  - DELETE /teams/members/:userId endpoint
+  - GET /repos now includes enabledBy, enabledByName, canToggle
+
+/web/src/app/dashboard/team/page.tsx
+  - Invite form with email + role
+  - Team members with remove/delete buttons
+
+/web/src/app/dashboard/repos/page.tsx
+  - Combined allRepos memo (user's + team's)
+  - Team badge, permissions, "Added by" text
+```
+
+---
+
 ## 2024-12-30: Project Creation
 
 ### Session: Initial Build
@@ -27,124 +117,8 @@ Built complete MVP in single session:
    - Summarization endpoint
    - Install script at /i
 
-### Files Created
-```
-/Goldfish/personal/recall/
-├── cli/
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/
-│       ├── index.ts
-│       ├── commands/
-│       │   ├── init.ts
-│       │   ├── save.ts
-│       │   ├── status.ts
-│       │   └── sync.ts
-│       ├── extractors/
-│       │   ├── index.ts
-│       │   ├── claude-code.ts
-│       │   ├── cursor.ts
-│       │   ├── codex.ts
-│       │   └── gemini.ts
-│       ├── core/
-│       │   ├── types.ts
-│       │   ├── storage.ts
-│       │   └── snapshots.ts
-│       └── utils/
-│           └── git.ts
-├── web/
-│   ├── package.json
-│   ├── next.config.ts
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
-│   ├── postcss.config.mjs
-│   └── src/
-│       ├── app/
-│       │   ├── layout.tsx
-│       │   ├── page.tsx
-│       │   └── globals.css
-│       └── components/
-│           ├── Header.tsx
-│           ├── Hero.tsx
-│           ├── Terminal.tsx
-│           ├── Problem.tsx
-│           ├── HowItWorks.tsx
-│           ├── Product.tsx
-│           ├── WorksWith.tsx
-│           ├── Pricing.tsx
-│           ├── FinalCTA.tsx
-│           └── Footer.tsx
-├── cloud/
-│   ├── package.json
-│   ├── wrangler.toml
-│   ├── tsconfig.json
-│   └── src/
-│       └── index.ts
-└── goldfish/
-    ├── small.md
-    ├── medium.md
-    └── large.md
-```
-
-### Build Commands
-```bash
-# CLI
-cd cli && npm install && npm run build
-# Test: node dist/index.js --help
-
-# Web
-cd web && npm install && npm run build
-# Dev: npm run dev
-
-# Cloud
-cd cloud && npm install && npm run typecheck
-# Dev: npm run dev
-```
-
 ### Key Insights from Ultrathink
 - CLI IS the product, everything else is distribution
 - Build capture mechanism first, cloud/landing page second
 - Local-only mode lets dogfooding happen immediately
 - Template-based summaries work while AI integration is developed
-
-
----
-
-## Session: 3697603a...
-**Date:** 2026-01-05 10:31
-**Messages:** 22
-
-**First message:**
-> recall_status
-
-**Files touched:**
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/small.md`
-
-**Tools:** Bash, Read
-
-*Raw transcript in ~/.claude session files*
-
----
-
-## Session: a152dec5...
-**Date:** 2026-01-05 09:08
-**Messages:** 123
-
-**First message:**
-> we were in the middle of updating recall.team and iterm crashed, so can you get back on that and resume where we were. 
-
-**Files touched:**
-- `/Users/rayhernandez`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/cloud/migrations/0007_mcp_connections.sql`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/cloud/src/index.ts`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/inbox.md`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/medium.md`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/small.md`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/web/src/app/dashboard/page.tsx`
-- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/web/src/app/onboarding/page.tsx`
-- `/tmp/claude/-Users-rayhernandez/tasks/be122b9.output`
-
-**Tools:** Bash, Glob, Read, WebFetch
-
-*Raw transcript in ~/.claude session files*

@@ -1,39 +1,45 @@
 # Recall - Team Memory for AI Coding Assistants
 
-Sessions: 6 | Last: 2026-01-05
-Tokens: small ~1.5k | medium ~10k | large ~25k
+Sessions: 9 | Last: 2026-01-05
+Tokens: small ~1.7k | medium ~4k | large ~6k
 
 ## Current Status
-- **MCP Server:** LIVE on npm as `recall-mcp-server@0.2.0`
+- **MCP Server:** LIVE on npm as `recall-mcp-server@0.3.2`
 - **Web:** LIVE at https://recall.team (Cloudflare Pages)
 - **API:** https://recall-api.stoodiohq.workers.dev
-- **GitHub OAuth:** Migrated to StoodioHQ org (was personal raydawg88)
+- **Core Loop:** WORKING - Steven Ray tested, context auto-loads
 
 ## What's Working
 1. One-command install: `npx recall-mcp-server install <token>`
 2. GitHub OAuth signup/login flow
-3. Dashboard with setup wizard (subscription → repos → MCP install)
-4. "Recall is Active" page with magic words and tips
+3. Dashboard with team management
+4. Team invites with email + role
+5. Repos page shows ALL team repos (user can only toggle own)
+6. Activity tracking (who read what memory files when)
+7. **Auto-context loading via project CLAUDE.md** (the key fix)
 
-## Known Issues (Session 6)
-**Install script only configures ONE tool** - Auto-detects Claude Code > Cursor > Windsurf, uses first found. Need `--tool` flag for users with multiple AI tools.
+## Recent Major Fix (2026-01-05)
+**Problem:** User opens Claude in Recall project, says "summarize this" - Recall doesn't get called because MCP tools are opt-in.
 
-**Success state too celebratory** - Big checkmark shows every visit, should only show on first completion, then simpler "active" state.
+**Solution:** Two-pronged approach:
+1. On `recall_save_session` or `recall_init` → create/update project CLAUDE.md with instructions telling Claude to call `recall_get_context` immediately
+2. On MCP startup, if `.recall/` exists but CLAUDE.md doesn't → auto-create it
+
+**Result:** Steven Ray tested. It works.
 
 ## Magic Words
-- `remember` - Load recent context (low tokens, daily use)
-- `ultra remember` - Full project history (high tokens, onboarding/complex features)
+- `remember` - Load session history (medium.md)
+- `ultraremember` - Full transcripts (large.md)
 
-## Architecture (Locked)
+## Architecture
 - Encrypted `.recall/` files in git (useless without key)
 - Team encryption key on Recall servers
 - Valid seat = CLI fetches key, decrypts, loads context
-- No seat = AI starts from zero
+- Project CLAUDE.md ensures Claude calls Recall on session start
 
 ## What's NOT Built
 - Stripe payment integration (mock checkout only)
 - AI summarization (manual memory files for now)
-- Encryption layer (files unencrypted currently)
 
 ## Key Files
 - `/mcp/` - MCP server (the npm package)
