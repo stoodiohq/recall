@@ -586,8 +586,157 @@ server.registerTool('recall_status', {
   }
 });
 
+/**
+ * Get the MCP config file path for the current platform/tool
+ * Priority: Claude Code (~/.mcp.json) > Cursor (~/.cursor/mcp.json) > Windsurf
+ */
+function getMcpConfigPath(): string {
+  const home = os.homedir();
+
+  // Check which config files exist
+  const claudeConfig = path.join(home, '.mcp.json');
+  const cursorConfig = path.join(home, '.cursor', 'mcp.json');
+  const windsurfConfig = path.join(home, '.codeium', 'windsurf', 'mcp.json');
+
+  // If any exist, use the first one found
+  if (fs.existsSync(claudeConfig)) return claudeConfig;
+  if (fs.existsSync(cursorConfig)) return cursorConfig;
+  if (fs.existsSync(windsurfConfig)) return windsurfConfig;
+
+  // Default to Claude Code config
+  return claudeConfig;
+}
+
+/**
+ * Install Recall MCP server into the user's MCP config
+ */
+async function installRecall(token: string): Promise<void> {
+  const configPath = getMcpConfigPath();
+  console.log(`\n🔧 Installing Recall MCP server...\n`);
+
+  // Validate token first
+  console.log('Validating token...');
+  try {
+    const response = await fetch(`${API_URL}/auth/me`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      console.error('❌ Invalid token. Get your token from https://recall.team/dashboard');
+      process.exit(1);
+    }
+
+    const user = await response.json();
+    console.log(`✓ Authenticated as ${user.name || user.githubUsername}`);
+    if (user.team) {
+      console.log(`✓ Team: ${user.team.name}`);
+    }
+  } catch (error) {
+    console.error('❌ Failed to validate token:', error instanceof Error ? error.message : 'Unknown error');
+    process.exit(1);
+  }
+
+  // Read or create MCP config
+  let mcpConfig: { mcpServers?: Record<string, unknown> } = { mcpServers: {} };
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const existing = fs.readFileSync(configPath, 'utf-8');
+      mcpConfig = JSON.parse(existing);
+      console.log(`✓ Found existing config at ${configPath}`);
+    } catch {
+      console.log(`⚠ Could not parse existing config, creating new one`);
+    }
+  } else {
+    console.log(`Creating new config at ${configPath}`);
+    // Ensure directory exists for cursor/windsurf configs
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  // Ensure mcpServers object exists
+  if (!mcpConfig.mcpServers) {
+    mcpConfig.mcpServers = {};
+  }
+
+  // Add/update recall entry
+  mcpConfig.mcpServers.recall = {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', 'recall-mcp-server@latest'],
+    env: {
+      RECALL_API_TOKEN: token,
+    },
+  };
+
+  // Write config
+  fs.writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2));
+  console.log(`✓ Added recall to ${configPath}`);
+
+  // Ping the API to register connection
+  console.log('Registering connection...');
+  try {
+    await getTeamKey(token);
+    console.log('✓ Connection registered');
+  } catch {
+    // Non-fatal, connection will register on first use
+  }
+
+  console.log(`
+✅ Recall installed successfully!
+
+Next steps:
+1. Restart your AI coding tool (Claude Code, Cursor, or Windsurf)
+2. The recall tools will be available automatically
+
+Need help? Visit https://recall.team/docs
+`);
+}
+
+// Handle CLI commands
+async function handleCli(): Promise<boolean> {
+  const args = process.argv.slice(2);
+
+  if (args[0] === 'install') {
+    const token = args[1];
+
+    if (!token) {
+      console.error('Usage: npx recall-mcp-server install <token>');
+      console.error('\nGet your token from https://recall.team/dashboard');
+      process.exit(1);
+    }
+
+    await installRecall(token);
+    return true; // Handled CLI command, don't start server
+  }
+
+  if (args[0] === '--help' || args[0] === '-h') {
+    console.log(`
+Recall MCP Server - Team memory for AI coding tools
+
+Usage:
+  npx recall-mcp-server install <token>   Install and configure Recall
+  npx recall-mcp-server                   Start MCP server (called by AI tools)
+
+Get your token from https://recall.team/dashboard
+`);
+    return true;
+  }
+
+  return false; // No CLI command, start server normally
+}
+
 // Start the server
 async function main() {
+  // Check for CLI commands first
+  const handledCli = await handleCli();
+  if (handledCli) {
+    return;
+  }
+
+  // Normal MCP server mode
   const transport = new StdioServerTransport();
 
   // Ping the API on startup to register connection (updates last_mcp_connection)

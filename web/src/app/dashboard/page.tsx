@@ -30,42 +30,6 @@ interface EnabledRepo {
   initializedAt: string | null;
 }
 
-const AI_TOOLS = [
-  {
-    id: 'claude-code',
-    name: 'Claude Code',
-    icon: (
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    ),
-    configFile: '~/.mcp.json',
-    instructions: 'Add to mcpServers in ~/.mcp.json:',
-  },
-  {
-    id: 'cursor',
-    name: 'Cursor',
-    icon: (
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M13.5 3L4 14h7l-1.5 7L20 10h-7l1.5-7z" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    ),
-    configFile: '~/.cursor/mcp.json',
-    instructions: 'Add to mcpServers in mcp.json:',
-  },
-  {
-    id: 'windsurf',
-    name: 'Windsurf',
-    icon: (
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M3 17l6-6 4 4 8-8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    ),
-    configFile: '~/.codeium/windsurf/mcp.json',
-    instructions: 'Add to mcpServers in mcp.json:',
-  },
-];
-
 function getTimeAgo(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
@@ -286,8 +250,7 @@ function IntegrateStep({
   hasMcpConnection: boolean;
   lastMcpConnection: string | null;
 }) {
-  const [expandedTool, setExpandedTool] = useState<string | null>('claude-code');
-  const [copiedTool, setCopiedTool] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [apiToken, setApiToken] = useState<string | null>(null);
   const [generatingToken, setGeneratingToken] = useState(true);
 
@@ -317,25 +280,13 @@ function IntegrateStep({
     generateToken();
   }, []);
 
-  // Generate config with token embedded
-  const getConfigForTool = (toolId: string) => {
-    const tokenPlaceholder = apiToken || 'LOADING...';
+  const installCommand = apiToken ? `npx recall-mcp-server install ${apiToken}` : '';
 
-    // All tools use the same format - just the entry to add to mcpServers
-    return `"recall": {
-  "type": "stdio",
-  "command": "npx",
-  "args": ["-y", "recall-mcp-server@latest"],
-  "env": {
-    "RECALL_API_TOKEN": "${tokenPlaceholder}"
-  }
-}`;
-  };
-
-  const handleCopyConfig = (toolId: string) => {
-    navigator.clipboard.writeText(getConfigForTool(toolId));
-    setCopiedTool(toolId);
-    setTimeout(() => setCopiedTool(null), 2000);
+  const handleCopy = () => {
+    if (!installCommand) return;
+    navigator.clipboard.writeText(installCommand);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   if (hasMcpConnection) {
@@ -366,7 +317,7 @@ function IntegrateStep({
       <div className="flex items-center justify-center py-8">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-text-secondary">Preparing your configuration...</span>
+          <span className="text-text-secondary">Preparing your install command...</span>
         </div>
       </div>
     );
@@ -374,82 +325,63 @@ function IntegrateStep({
 
   return (
     <div className="space-y-4">
-      <p className="text-text-secondary">Copy this configuration to your AI tool. Your API token is already included.</p>
+      <p className="text-text-secondary">Run this command in your terminal to install Recall:</p>
 
-      {/* Tool tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        {AI_TOOLS.map((tool) => (
+      {/* Install Command */}
+      <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between p-4">
+          <code className="text-cyan-400 font-mono text-sm break-all flex-1 mr-4">
+            {installCommand || 'Loading...'}
+          </code>
           <button
-            key={tool.id}
-            onClick={() => setExpandedTool(tool.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
-              expandedTool === tool.id
-                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                : 'bg-bg-base text-text-secondary border border-border-subtle hover:border-border-subtle hover:text-text-primary'
-            }`}
+            onClick={handleCopy}
+            disabled={!apiToken}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
+              copied
+                ? 'bg-green-500/20 text-green-400'
+                : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
+            } disabled:opacity-50`}
           >
-            {tool.icon}
-            {tool.name}
+            {copied ? (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Copied!
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy
+              </>
+            )}
           </button>
-        ))}
+        </div>
       </div>
 
-      {/* Selected tool config with token embedded */}
-      {expandedTool && (
-        <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
-          {AI_TOOLS.filter(t => t.id === expandedTool).map(tool => (
-            <div key={tool.id} className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-primary font-medium">{tool.instructions}</p>
-                  <p className="text-text-tertiary text-sm">{tool.configFile}</p>
-                </div>
-                <button
-                  onClick={() => handleCopyConfig(tool.id)}
-                  disabled={!apiToken}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    copiedTool === tool.id
-                      ? 'bg-green-500/20 text-green-400'
-                      : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
-                  } disabled:opacity-50`}
-                >
-                  {copiedTool === tool.id ? (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                      Copy Config
-                    </>
-                  )}
-                </button>
-              </div>
-              <pre className="bg-bg-elevated p-4 rounded-lg text-sm text-text-secondary overflow-x-auto font-mono">
-                {getConfigForTool(tool.id)}
-              </pre>
-              <p className="text-green-400/80 text-xs flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                Your personal API token is included in this config
-              </p>
-            </div>
-          ))}
+      {/* What it does */}
+      <div className="flex items-start gap-3 p-3 bg-bg-elevated border border-border-subtle rounded-lg">
+        <svg className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div className="text-sm text-text-secondary">
+          <p>This command automatically:</p>
+          <ul className="mt-1 space-y-0.5 text-text-tertiary">
+            <li>• Detects your AI tool (Claude Code, Cursor, or Windsurf)</li>
+            <li>• Adds Recall to your MCP configuration</li>
+            <li>• Verifies the connection</li>
+          </ul>
         </div>
-      )}
+      </div>
 
       <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
         <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <p className="text-text-secondary text-sm">
-          After adding the config, restart your AI tool. This page will update automatically once connected.
+          After running, restart your AI tool. This page will update automatically once connected.
         </p>
       </div>
     </div>
