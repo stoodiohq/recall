@@ -11,6 +11,7 @@ export interface User {
   avatarUrl: string | null;
   githubUsername: string;
   onboardingCompleted: boolean;
+  lastMcpConnection: string | null;
   profile: {
     role: string | null;
     company: string | null;

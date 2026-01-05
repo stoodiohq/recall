@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/AuthContext';
 import { getToken } from '@/lib/auth';
@@ -31,6 +31,7 @@ export default function ReposPage() {
   const [loadingRepos, setLoadingRepos] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!loading && !user) {
@@ -93,6 +94,18 @@ export default function ReposPage() {
     });
   };
 
+  // Filter repos based on search query
+  const filteredRepos = useMemo(() => {
+    if (!searchQuery.trim()) return githubRepos;
+    const query = searchQuery.toLowerCase();
+    return githubRepos.filter(repo =>
+      repo.fullName.toLowerCase().includes(query) ||
+      repo.name.toLowerCase().includes(query) ||
+      repo.description?.toLowerCase().includes(query) ||
+      repo.language?.toLowerCase().includes(query)
+    );
+  }, [githubRepos, searchQuery]);
+
   const handleSave = async () => {
     const token = getToken();
     if (!token) return;
@@ -137,7 +150,7 @@ export default function ReposPage() {
         });
       }
 
-      router.push('/dashboard');
+      router.push('/dashboard?refresh=1');
     } catch (err) {
       console.error('Failed to save repos:', err);
       setError('Failed to save repository changes');
@@ -160,31 +173,62 @@ export default function ReposPage() {
 
   return (
     <div className="min-h-screen bg-bg-base">
-      {/* Header */}
-      <header className="border-b border-border-subtle bg-bg-elevated">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="text-text-tertiary hover:text-text-primary transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <h1 className="text-xl font-semibold text-text-primary">Manage Repositories</h1>
+      {/* Sticky Header */}
+      <header className="sticky top-0 z-10 border-b border-border-subtle bg-bg-elevated/95 backdrop-blur-sm">
+        <div className="max-w-4xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <h1 className="text-xl font-semibold text-text-primary">Manage Repositories</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text-secondary">
+                {selectedRepos.size} selected
+              </span>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="bg-text-primary text-bg-base px-4 py-2 rounded-sm font-medium hover:translate-y-[-1px] hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-text-secondary">
-              {selectedRepos.size} selected
-            </span>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="bg-text-primary text-bg-base px-4 py-2 rounded-sm font-medium hover:translate-y-[-1px] hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+
+          {/* Search Input */}
+          <div className="relative">
+            <svg
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
             >
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search repositories..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-bg-base border border-border-subtle rounded-lg pl-10 pr-4 py-2 text-text-primary placeholder-text-tertiary focus:outline-none focus:border-text-tertiary transition-colors"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -199,10 +243,15 @@ export default function ReposPage() {
 
         <p className="text-text-secondary mb-6">
           Select the repositories you want Recall to track. Memory files will be added to each selected repository.
+          {searchQuery && filteredRepos.length !== githubRepos.length && (
+            <span className="text-text-tertiary ml-2">
+              (Showing {filteredRepos.length} of {githubRepos.length})
+            </span>
+          )}
         </p>
 
         <div className="space-y-2">
-          {githubRepos.map((repo) => {
+          {filteredRepos.map((repo) => {
             const isEnabled = enabledRepos.some(r => r.githubRepoId === repo.id);
             const isSelected = selectedRepos.has(repo.id);
 
@@ -260,12 +309,16 @@ export default function ReposPage() {
           })}
         </div>
 
-        {githubRepos.length === 0 && !error && (
+        {filteredRepos.length === 0 && !error && (
           <div className="text-center py-12">
             <svg className="w-12 h-12 mx-auto text-text-tertiary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <p className="text-text-secondary">No repositories found in your GitHub account</p>
+            {searchQuery ? (
+              <p className="text-text-secondary">No repositories matching &quot;{searchQuery}&quot;</p>
+            ) : (
+              <p className="text-text-secondary">No repositories found in your GitHub account</p>
+            )}
           </div>
         )}
       </main>

@@ -87,6 +87,7 @@ interface User {
   company: string | null;
   team_size: string | null;
   onboarding_completed: number;
+  last_mcp_connection: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -483,6 +484,7 @@ app.get('/auth/me', async (c) => {
     avatarUrl: user.avatar_url,
     githubUsername: user.github_username,
     onboardingCompleted: !!user.onboarding_completed,
+    lastMcpConnection: user.last_mcp_connection,
     profile: {
       role: user.role,
       company: user.company,
@@ -685,8 +687,8 @@ app.post('/onboarding/complete', async (c) => {
       const repoId = generateId();
       try {
         await c.env.DB.prepare(`
-          INSERT INTO repos (id, team_id, github_repo_id, name, full_name, private, description, language, enabled_by, enabled_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO repos (id, team_id, github_repo_id, name, full_name, private, description, language, enabled, enabled_by, enabled_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         `).bind(
           repoId,
           team.id,
@@ -910,16 +912,21 @@ app.post('/repos/:repoId/toggle', async (c) => {
 
 // Initialize repo with .recall directory
 app.post('/repos/:repoId/initialize', async (c) => {
+  console.log('[Initialize] Starting initialization...');
+
   const user = await getAuthUser(c);
   if (!user) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
+  console.log('[Initialize] User authenticated:', user.id);
 
   if (!user.github_access_token) {
     return c.json({ error: 'GitHub token not available. Please re-authenticate.' }, 400);
   }
+  console.log('[Initialize] GitHub token exists');
 
   const repoId = c.req.param('repoId');
+  console.log('[Initialize] Repo ID:', repoId);
 
   // Get user's team
   const membership = await c.env.DB.prepare(`
@@ -930,8 +937,10 @@ app.post('/repos/:repoId/initialize', async (c) => {
   `).bind(user.id).first<{ id: string }>();
 
   if (!membership) {
+    console.log('[Initialize] No team found for user');
     return c.json({ error: 'No team found' }, 404);
   }
+  console.log('[Initialize] Team found:', membership.id);
 
   // Get repo info
   const repo = await c.env.DB.prepare(`
@@ -946,8 +955,10 @@ app.post('/repos/:repoId/initialize', async (c) => {
   }>();
 
   if (!repo) {
+    console.log('[Initialize] Repo not found:', repoId, 'team:', membership.id);
     return c.json({ error: 'Repo not found' }, 404);
   }
+  console.log('[Initialize] Repo found:', repo.full_name);
 
   // Get encryption key
   const teamKey = await c.env.DB.prepare(`
@@ -955,11 +966,14 @@ app.post('/repos/:repoId/initialize', async (c) => {
   `).bind(membership.id).first<{ encryption_key: string; key_version: number }>();
 
   if (!teamKey) {
+    console.log('[Initialize] Team encryption key not found');
     return c.json({ error: 'Team encryption key not found' }, 500);
   }
+  console.log('[Initialize] Encryption key found, version:', teamKey.key_version);
 
   try {
     // 1. Get repo default branch
+    console.log('[Initialize] Step 1: Getting default branch...');
     const repoResponse = await fetch(`https://api.github.com/repos/${repo.full_name}`, {
       headers: {
         'Authorization': `Bearer ${user.github_access_token}`,
@@ -974,8 +988,10 @@ app.post('/repos/:repoId/initialize', async (c) => {
 
     const repoData = await repoResponse.json() as { default_branch: string };
     const defaultBranch = repoData.default_branch;
+    console.log('[Initialize] Step 1 complete, default branch:', defaultBranch);
 
     // 2. Get repo tree to analyze structure
+    console.log('[Initialize] Step 2: Getting repo tree...');
     const treeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/trees/${defaultBranch}?recursive=1`, {
       headers: {
         'Authorization': `Bearer ${user.github_access_token}`,
@@ -1007,8 +1023,10 @@ app.post('/repos/:repoId/initialize', async (c) => {
         .map(f => f.path);
       repoStructure = keyFiles.join('\n');
     }
+    console.log('[Initialize] Step 2 complete, found', repoStructure.split('\n').length, 'files');
 
     // 3. Try to read README for context
+    console.log('[Initialize] Step 3: Reading README...');
     let readmeContent = '';
     const readmeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/readme`, {
       headers: {
@@ -1024,8 +1042,10 @@ app.post('/repos/:repoId/initialize', async (c) => {
         readmeContent = readmeContent.slice(0, 2000) + '\n...[truncated]';
       }
     }
+    console.log('[Initialize] Step 3 complete, README length:', readmeContent.length);
 
     // 4. Generate initial memory files with Gemini
+    console.log('[Initialize] Step 4: Generating memory files...');
     const projectInfo = `
 Project: ${repo.name}
 Full Name: ${repo.full_name}
@@ -1051,13 +1071,50 @@ ${projectInfo}
 
 This is the FIRST session - there's no history yet. Create initial memory files that help AI coding assistants understand this project.`;
 
-      const [small, medium] = await Promise.all([
-        callGemini(c.env.GEMINI_API_KEY, SMALL_SUMMARY_PROMPT, initPrompt),
-        callGemini(c.env.GEMINI_API_KEY, MEDIUM_SUMMARY_PROMPT, initPrompt),
-      ]);
+      console.log('[Initialize] Calling Gemini API...');
+      try {
+        const [small, medium] = await Promise.all([
+          callGemini(c.env.GEMINI_API_KEY, SMALL_SUMMARY_PROMPT, initPrompt),
+          callGemini(c.env.GEMINI_API_KEY, MEDIUM_SUMMARY_PROMPT, initPrompt),
+        ]);
+        smallContent = small;
+        mediumContent = medium;
+        console.log('[Initialize] Gemini API success');
+      } catch (geminiError) {
+        console.error('[Initialize] Gemini API failed:', geminiError);
+        // Fall back to template if Gemini fails
+        smallContent = '';
+        mediumContent = '';
+      }
 
-      smallContent = small;
-      mediumContent = medium;
+      if (!smallContent || !mediumContent) {
+        console.log('[Initialize] Using template fallback');
+        smallContent = `# ${repo.name} - Team Context
+
+Sessions: 0 | Last: ${new Date().toISOString().split('T')[0]}
+Tokens: small ~300 | medium ~500 | large ~800
+
+## What It Is
+${repo.description || 'A development project.'}
+
+## Current Status
+- **Phase:** Just initialized
+- **Working:** Recall memory initialized
+- **Blocked:** None
+
+## Recent Decisions
+_No decisions recorded yet._
+
+---
+*medium.md = session history | large.md = full transcripts*
+`;
+        mediumContent = `# ${repo.name} - Development History
+
+Sessions: 0 | Updated: ${new Date().toISOString().split('T')[0]}
+
+_No sessions yet. Start using your AI coding assistant to begin building team memory._
+`;
+      }
       largeContent = `# ${repo.name} - Full Context
 
 ## Initialization
@@ -1121,13 +1178,17 @@ Initialized by: @${user.github_username}
 *Session transcripts will be appended here.*
 `;
     }
+    console.log('[Initialize] Step 4 complete, content lengths:', smallContent.length, mediumContent.length, largeContent.length);
 
     // 5. Encrypt the content
+    console.log('[Initialize] Step 5: Encrypting content...');
     const encryptedSmall = await encryptContent(smallContent, teamKey.encryption_key);
     const encryptedMedium = await encryptContent(mediumContent, teamKey.encryption_key);
     const encryptedLarge = await encryptContent(largeContent, teamKey.encryption_key);
+    console.log('[Initialize] Step 5 complete, encrypted');
 
     // 6. Get current commit SHA
+    console.log('[Initialize] Step 6: Getting branch ref...');
     const refResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/ref/heads/${defaultBranch}`, {
       headers: {
         'Authorization': `Bearer ${user.github_access_token}`,
@@ -1142,8 +1203,10 @@ Initialized by: @${user.github_username}
 
     const refData = await refResponse.json() as { object: { sha: string } };
     const baseSha = refData.object.sha;
+    console.log('[Initialize] Step 6 complete, base SHA:', baseSha);
 
     // 7. Create blobs for each file
+    console.log('[Initialize] Step 7: Creating blobs...');
     const createBlob = async (content: string): Promise<string> => {
       const blobResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/blobs`, {
         method: 'POST',
@@ -1187,8 +1250,10 @@ These files are encrypted with your team's key. Only team members with active Re
 Learn more at [recall.team](https://recall.team)
 `),
     ]);
+    console.log('[Initialize] Step 7 complete, blobs created');
 
     // 8. Get base tree
+    console.log('[Initialize] Step 8: Getting base tree...');
     const baseTreeResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/commits/${baseSha}`, {
       headers: {
         'Authorization': `Bearer ${user.github_access_token}`,
@@ -1197,8 +1262,10 @@ Learn more at [recall.team](https://recall.team)
       },
     });
     const baseCommit = await baseTreeResponse.json() as { tree: { sha: string } };
+    console.log('[Initialize] Step 8 complete, base tree SHA:', baseCommit.tree?.sha);
 
     // 9. Create tree with new files
+    console.log('[Initialize] Step 9: Creating new tree...');
     const treeCreateResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/trees`, {
       method: 'POST',
       headers: {
@@ -1219,8 +1286,10 @@ Learn more at [recall.team](https://recall.team)
     });
 
     const newTree = await treeCreateResponse.json() as { sha: string };
+    console.log('[Initialize] Step 9 complete, new tree SHA:', newTree.sha);
 
     // 10. Create commit
+    console.log('[Initialize] Step 10: Creating commit...');
     const commitResponse = await fetch(`https://api.github.com/repos/${repo.full_name}/git/commits`, {
       method: 'POST',
       headers: {
@@ -1237,8 +1306,10 @@ Learn more at [recall.team](https://recall.team)
     });
 
     const newCommit = await commitResponse.json() as { sha: string };
+    console.log('[Initialize] Step 10 complete, commit SHA:', newCommit.sha);
 
     // 11. Update branch ref
+    console.log('[Initialize] Step 11: Updating branch ref...');
     await fetch(`https://api.github.com/repos/${repo.full_name}/git/refs/heads/${defaultBranch}`, {
       method: 'PATCH',
       headers: {
@@ -1251,12 +1322,15 @@ Learn more at [recall.team](https://recall.team)
         sha: newCommit.sha,
       }),
     });
+    console.log('[Initialize] Step 11 complete, ref updated');
 
     // 12. Update repo record
+    console.log('[Initialize] Step 12: Updating DB record...');
     const now = new Date().toISOString();
     await c.env.DB.prepare(`
       UPDATE repos SET initialized_at = ?, last_sync_at = ? WHERE id = ?
     `).bind(now, now, repoId).run();
+    console.log('[Initialize] Step 12 complete, ALL DONE!');
 
     return c.json({
       success: true,
@@ -1266,10 +1340,14 @@ Learn more at [recall.team](https://recall.team)
     });
 
   } catch (error) {
-    console.error('Repo initialization error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('[Initialize] FATAL ERROR:', errorMessage);
+    console.error('[Initialize] Stack:', errorStack);
     return c.json({
       error: 'Failed to initialize repo',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: errorMessage,
+      step: 'unknown'
     }, 500);
   }
 });
@@ -1964,6 +2042,11 @@ app.get('/keys/team', async (c) => {
       `).bind(membership.id, body.machineId).run();
     }
   }
+
+  // Track MCP connection for this user
+  await c.env.DB.prepare(`
+    UPDATE users SET last_mcp_connection = datetime('now') WHERE id = ?
+  `).bind(user.id).run();
 
   // Get the encryption key
   const teamKey = await c.env.DB.prepare(`

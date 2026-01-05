@@ -133,6 +133,8 @@ function OnboardingContent() {
     });
   };
 
+  const [initProgress, setInitProgress] = useState<{ current: number; total: number } | null>(null);
+
   const handleComplete = async () => {
     if (selectedRepos.size === 0) return;
 
@@ -174,15 +176,50 @@ function OnboardingContent() {
         throw new Error('Failed to complete onboarding');
       }
 
+      const data = await response.json();
+      const enabledRepos = data.enabledRepos || [];
+
+      // Auto-initialize each repo
+      console.log('[Onboarding] enabledRepos from API:', enabledRepos);
+      if (enabledRepos.length > 0) {
+        setInitProgress({ current: 0, total: enabledRepos.length });
+
+        for (let i = 0; i < enabledRepos.length; i++) {
+          const repo = enabledRepos[i];
+          setInitProgress({ current: i + 1, total: enabledRepos.length });
+          console.log(`[Onboarding] Initializing repo ${repo.id} (${repo.fullName})...`);
+
+          try {
+            const initResponse = await fetch(`${API_URL}/repos/${repo.id}/initialize`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+              },
+            });
+            const initResult = await initResponse.json();
+            console.log(`[Onboarding] Initialize ${repo.fullName} result:`, initResponse.status, initResult);
+            if (!initResponse.ok) {
+              console.error(`[Onboarding] Failed to initialize ${repo.fullName}:`, initResult);
+            }
+          } catch (err) {
+            console.error(`[Onboarding] Failed to initialize ${repo.fullName}:`, err);
+            // Continue with other repos even if one fails
+          }
+        }
+      } else {
+        console.log('[Onboarding] No repos to initialize');
+      }
+
       // Refresh user data to include the new team
       await refresh();
 
-      // Redirect to dashboard
-      router.push('/dashboard');
+      // Redirect to dashboard with refresh param to ensure repos load
+      router.push('/dashboard?refresh=1');
     } catch (error) {
       console.error('Failed to complete onboarding:', error);
     } finally {
       setSaving(false);
+      setInitProgress(null);
     }
   };
 
@@ -588,11 +625,13 @@ function OnboardingContent() {
                   {saving ? (
                     <>
                       <div className="w-5 h-5 border-2 border-bg-base border-t-transparent rounded-full animate-spin" />
-                      Setting up...
+                      {initProgress
+                        ? `Initializing repo ${initProgress.current}/${initProgress.total}...`
+                        : 'Setting up...'}
                     </>
                   ) : (
                     <>
-                      Enable {selectedRepos.size} Repo{selectedRepos.size !== 1 ? 's' : ''}
+                      Connect {selectedRepos.size} Repo{selectedRepos.size !== 1 ? 's' : ''}
                     </>
                   )}
                 </button>
