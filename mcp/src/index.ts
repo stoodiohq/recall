@@ -72,9 +72,17 @@ function decrypt(encryptedData: string, keyBase64: string): string {
 }
 
 /**
- * Load config from file
+ * Load config from environment variable or file
+ * Priority: RECALL_API_TOKEN env var > config file
  */
 function loadConfig(): RecallConfig | null {
+  // Check environment variable first (set via MCP config)
+  const envToken = process.env.RECALL_API_TOKEN;
+  if (envToken) {
+    return { token: envToken };
+  }
+
+  // Fall back to config file
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const data = fs.readFileSync(CONFIG_PATH, 'utf-8');

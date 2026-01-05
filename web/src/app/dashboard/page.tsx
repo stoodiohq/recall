@@ -330,44 +330,65 @@ function IntegrateStep({
   const [expandedTool, setExpandedTool] = useState<string | null>('claude-code');
   const [copiedTool, setCopiedTool] = useState<string | null>(null);
   const [apiToken, setApiToken] = useState<string | null>(null);
-  const [generatingToken, setGeneratingToken] = useState(false);
-  const [copiedToken, setCopiedToken] = useState(false);
+  const [generatingToken, setGeneratingToken] = useState(true);
 
-  const handleCopyConfig = (toolId: string, config: string) => {
-    navigator.clipboard.writeText(config);
+  // Auto-generate token on mount
+  useEffect(() => {
+    const generateToken = async () => {
+      try {
+        const token = getToken();
+        const response = await fetch(`${API_URL}/auth/token`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: 'MCP Token' }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setApiToken(data.token);
+        }
+      } catch (err) {
+        console.error('Failed to generate token:', err);
+      } finally {
+        setGeneratingToken(false);
+      }
+    };
+    generateToken();
+  }, []);
+
+  // Generate config with token embedded
+  const getConfigForTool = (toolId: string) => {
+    const tokenPlaceholder = apiToken || 'LOADING...';
+
+    if (toolId === 'claude-code') {
+      return `"recall": {
+  "command": "npx",
+  "args": ["-y", "@anthropic-ai/recall-mcp"],
+  "env": {
+    "RECALL_API_TOKEN": "${tokenPlaceholder}"
+  }
+}`;
+    }
+
+    return `{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/recall-mcp"],
+      "env": {
+        "RECALL_API_TOKEN": "${tokenPlaceholder}"
+      }
+    }
+  }
+}`;
+  };
+
+  const handleCopyConfig = (toolId: string) => {
+    navigator.clipboard.writeText(getConfigForTool(toolId));
     setCopiedTool(toolId);
     setTimeout(() => setCopiedTool(null), 2000);
-  };
-
-  const handleGenerateToken = async () => {
-    setGeneratingToken(true);
-    try {
-      const token = getToken();
-      const response = await fetch(`${API_URL}/auth/token`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: 'CLI Token' }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setApiToken(data.token);
-      }
-    } catch (err) {
-      console.error('Failed to generate token:', err);
-    } finally {
-      setGeneratingToken(false);
-    }
-  };
-
-  const handleCopyToken = () => {
-    if (apiToken) {
-      navigator.clipboard.writeText(apiToken);
-      setCopiedToken(true);
-      setTimeout(() => setCopiedToken(false), 2000);
-    }
   };
 
   if (hasMcpConnection) {
@@ -392,148 +413,96 @@ function IntegrateStep({
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Step 1: Generate API Token */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-xs font-bold">1</div>
-          <p className="text-text-primary font-medium">Generate API Token</p>
+  // Show loading state while token generates
+  if (generatingToken) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="flex items-center gap-3">
+          <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+          <span className="text-text-secondary">Preparing your configuration...</span>
         </div>
+      </div>
+    );
+  }
 
-        {apiToken ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                readOnly
-                value={apiToken}
-                className="flex-1 bg-bg-base border border-green-500/30 rounded px-3 py-2 text-sm text-text-primary font-mono"
-              />
-              <button
-                onClick={handleCopyToken}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  copiedToken
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
-                }`}
-              >
-                {copiedToken ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-            <p className="text-text-tertiary text-xs">Save this token - you won&apos;t see it again</p>
-          </div>
-        ) : (
+  return (
+    <div className="space-y-4">
+      <p className="text-text-secondary">Copy this configuration to your AI tool. Your API token is already included.</p>
+
+      {/* Tool tabs */}
+      <div className="flex gap-2 overflow-x-auto pb-2">
+        {AI_TOOLS.map((tool) => (
           <button
-            onClick={handleGenerateToken}
-            disabled={generatingToken}
-            className="flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            key={tool.id}
+            onClick={() => setExpandedTool(tool.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
+              expandedTool === tool.id
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                : 'bg-bg-base text-text-secondary border border-border-subtle hover:border-border-subtle hover:text-text-primary'
+            }`}
           >
-            {generatingToken ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                </svg>
-                Generate Token
-              </>
-            )}
+            {tool.icon}
+            {tool.name}
           </button>
-        )}
+        ))}
       </div>
 
-      {/* Step 2: Configure MCP */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-xs font-bold">2</div>
-          <p className="text-text-primary font-medium">Configure your AI tool</p>
-        </div>
-
-        {/* Tool tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {AI_TOOLS.map((tool) => (
-            <button
-              key={tool.id}
-              onClick={() => setExpandedTool(tool.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${
-                expandedTool === tool.id
-                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-bg-base text-text-secondary border border-border-subtle hover:border-border-subtle hover:text-text-primary'
-              }`}
-            >
-              {tool.icon}
-              {tool.name}
-            </button>
+      {/* Selected tool config with token embedded */}
+      {expandedTool && (
+        <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
+          {AI_TOOLS.filter(t => t.id === expandedTool).map(tool => (
+            <div key={tool.id} className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-text-primary font-medium">{tool.instructions}</p>
+                  <p className="text-text-tertiary text-sm">{tool.configFile}</p>
+                </div>
+                <button
+                  onClick={() => handleCopyConfig(tool.id)}
+                  disabled={!apiToken}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    copiedTool === tool.id
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
+                  } disabled:opacity-50`}
+                >
+                  {copiedTool === tool.id ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Copy Config
+                    </>
+                  )}
+                </button>
+              </div>
+              <pre className="bg-bg-elevated p-4 rounded-lg text-sm text-text-secondary overflow-x-auto font-mono">
+                {getConfigForTool(tool.id)}
+              </pre>
+              <p className="text-green-400/80 text-xs flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Your personal API token is included in this config
+              </p>
+            </div>
           ))}
         </div>
-
-        {/* Selected tool config */}
-        {expandedTool && (
-          <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
-            {AI_TOOLS.filter(t => t.id === expandedTool).map(tool => (
-              <div key={tool.id} className="p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-text-primary font-medium">{tool.instructions}</p>
-                    <p className="text-text-tertiary text-sm">{tool.configFile}</p>
-                  </div>
-                  <button
-                    onClick={() => handleCopyConfig(tool.id, tool.config)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      copiedTool === tool.id
-                        ? 'bg-green-500/20 text-green-400'
-                        : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
-                    }`}
-                  >
-                    {copiedTool === tool.id ? (
-                      <>
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        Copy Config
-                      </>
-                    )}
-                  </button>
-                </div>
-                <pre className="bg-bg-elevated p-4 rounded-lg text-sm text-text-secondary overflow-x-auto font-mono">
-                  {tool.config}
-                </pre>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Step 3: Authenticate */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-xs font-bold">3</div>
-          <p className="text-text-primary font-medium">Authenticate with Recall</p>
-        </div>
-        <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
-          <p className="text-text-secondary text-sm mb-2">In your AI tool, run:</p>
-          <pre className="bg-bg-elevated p-3 rounded text-sm text-cyan-400 font-mono">recall_auth {apiToken ? apiToken : 'YOUR_TOKEN'}</pre>
-          <p className="text-text-tertiary text-xs mt-2">This connects your AI tool to your team&apos;s memory</p>
-        </div>
-      </div>
+      )}
 
       <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
         <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
         <p className="text-text-secondary text-sm">
-          Waiting for connection... This page will update automatically once your AI tool connects.
+          After adding the config, restart your AI tool. This page will update automatically once connected.
         </p>
       </div>
     </div>
