@@ -106,3 +106,45 @@ cd cloud && npm install && npm run typecheck
 - Build capture mechanism first, cloud/landing page second
 - Local-only mode lets dogfooding happen immediately
 - Template-based summaries work while AI integration is developed
+
+
+---
+
+## Session: 3697603a...
+**Date:** 2026-01-05 10:31
+**Messages:** 22
+
+**First message:**
+> recall_status
+
+**Files touched:**
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/small.md`
+
+**Tools:** Bash, Read
+
+*Raw transcript in ~/.claude session files*
+
+---
+
+## Session: a152dec5...
+**Date:** 2026-01-05 09:08
+**Messages:** 123
+
+**First message:**
+> we were in the middle of updating recall.team and iterm crashed, so can you get back on that and resume where we were. 
+
+**Files touched:**
+- `/Users/rayhernandez`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/cloud/migrations/0007_mcp_connections.sql`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/cloud/src/index.ts`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/inbox.md`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/medium.md`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/goldfish/small.md`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/web/src/app/dashboard/page.tsx`
+- `/Users/rayhernandez/Library/CloudStorage/Dropbox-Personal/Goldfish/personal/recall/web/src/app/onboarding/page.tsx`
+- `/tmp/claude/-Users-rayhernandez/tasks/be122b9.output`
+
+**Tools:** Bash, Glob, Read, WebFetch
+
+*Raw transcript in ~/.claude session files*

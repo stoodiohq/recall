@@ -8,7 +8,7 @@ import { getToken } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://recall-api.stoodiohq.workers.dev';
 
-type Step = 'profile' | 'plan' | 'repos';
+type Step = 'profile' | 'plan' | 'repos' | 'invited-profile';
 
 interface Repo {
   id: number;
@@ -55,6 +55,11 @@ function OnboardingContent() {
   const [company, setCompany] = useState('');
   const [teamSize, setTeamSize] = useState('');
 
+  // Invited member profile state
+  const [displayName, setDisplayName] = useState('');
+  const [website, setWebsite] = useState('');
+  const [isInvitedMember, setIsInvitedMember] = useState(false);
+
   // Plan state
   const [selectedPlan, setSelectedPlan] = useState<'team' | 'enterprise'>('team');
   const [seats, setSeats] = useState(5);
@@ -80,6 +85,32 @@ function OnboardingContent() {
   useEffect(() => {
     if (!authLoading && !user && !searchParams.get('token')) {
       router.push('/');
+      return;
+    }
+
+    // Check for pending invite - redirect back to accept it
+    if (!authLoading && user) {
+      const pendingInvite = sessionStorage.getItem('pendingInvite');
+      if (pendingInvite) {
+        router.push(`/invite?code=${pendingInvite}`);
+        return;
+      }
+
+      // If user is already on a team (invited member), show simplified profile
+      if (user.team) {
+        // If onboarding is already completed, go to dashboard
+        if (user.onboardingCompleted) {
+          router.push('/dashboard');
+          return;
+        }
+        // Otherwise show simplified profile for invited member
+        setIsInvitedMember(true);
+        setStep('invited-profile');
+        // Pre-fill display name if we have it from GitHub
+        if (user.name) {
+          setDisplayName(user.name);
+        }
+      }
     }
   }, [authLoading, user, router, searchParams]);
 
@@ -115,6 +146,41 @@ function OnboardingContent() {
   const handleProfileSubmit = () => {
     if (!role || !company || !teamSize) return;
     setStep('plan');
+  };
+
+  const handleInvitedProfileSubmit = async () => {
+    setSaving(true);
+    const token = getToken();
+
+    try {
+      // Update user profile and mark onboarding complete
+      const response = await fetch(`${API_URL}/onboarding/complete-invited`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: displayName || undefined,
+          role: role || undefined,
+          website: website || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to complete onboarding');
+      }
+
+      // Refresh user data
+      await refresh();
+
+      // Go to dashboard
+      router.push('/dashboard');
+    } catch (error) {
+      console.error('Failed to complete onboarding:', error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePlanSubmit = () => {
@@ -248,7 +314,7 @@ function OnboardingContent() {
           className="h-full bg-cyan-500"
           initial={{ width: '0%' }}
           animate={{
-            width: step === 'profile' ? '33%' : step === 'plan' ? '66%' : '100%'
+            width: step === 'invited-profile' ? '100%' : step === 'profile' ? '33%' : step === 'plan' ? '66%' : '100%'
           }}
           transition={{ duration: 0.3 }}
         />
@@ -339,6 +405,96 @@ function OnboardingContent() {
                 >
                   Continue
                 </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Invited Member Profile (simplified) */}
+          {step === 'invited-profile' && (
+            <motion.div
+              key="invited-profile"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="flex items-center gap-4 mb-8">
+                {user.avatarUrl && (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.name || user.githubUsername}
+                    className="w-16 h-16 rounded-full border-2 border-border-subtle"
+                  />
+                )}
+                <div>
+                  <h1 className="text-2xl font-bold text-text-primary">
+                    Welcome to {user.team?.name || 'the team'}!
+                  </h1>
+                  <p className="text-text-secondary">Complete your profile (all fields optional)</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Display name
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder={user.name || user.githubUsername}
+                    className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-cyan-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Your role
+                  </label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-4 py-3 text-text-primary focus:outline-none focus:border-cyan-500 transition-colors"
+                  >
+                    <option value="">Select your role</option>
+                    {roles.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    Website or portfolio
+                  </label>
+                  <input
+                    type="url"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    placeholder="https://yoursite.com"
+                    className="w-full bg-bg-elevated border border-border-subtle rounded-lg px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-cyan-500 transition-colors"
+                  />
+                </div>
+
+                <button
+                  onClick={handleInvitedProfileSubmit}
+                  disabled={saving}
+                  className="w-full bg-text-primary text-bg-base py-4 rounded-lg font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed hover:translate-y-[-1px] hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                >
+                  {saving ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-bg-base border-t-transparent rounded-full animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Get Started'
+                  )}
+                </button>
+
+                <p className="text-center text-text-tertiary text-sm">
+                  You can update these later in your profile settings.
+                </p>
               </div>
             </motion.div>
           )}

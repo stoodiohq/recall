@@ -732,6 +732,60 @@ app.post('/onboarding/complete', async (c) => {
   });
 });
 
+// Complete onboarding for invited members (simplified)
+app.post('/onboarding/complete-invited', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Verify user is actually on a team (was invited)
+  const membership = await c.env.DB.prepare(`
+    SELECT t.id, t.name FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first<{ id: string; name: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'You are not a member of any team' }, 400);
+  }
+
+  const body = await c.req.json<{ name?: string; role?: string; website?: string }>();
+  const now = new Date().toISOString();
+
+  // Update user profile and mark onboarding complete
+  await c.env.DB.prepare(`
+    UPDATE users SET
+      name = COALESCE(?, name),
+      role = COALESCE(?, role),
+      website = ?,
+      onboarding_completed = 1,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(
+    body.name || null,
+    body.role || null,
+    body.website || null,
+    now,
+    user.id
+  ).run();
+
+  return c.json({
+    success: true,
+    user: {
+      id: user.id,
+      name: body.name || user.name,
+      role: body.role,
+      website: body.website,
+    },
+    team: {
+      id: membership.id,
+      name: membership.name,
+    },
+  });
+});
+
 // Get onboarding status
 app.get('/onboarding/status', async (c) => {
   const user = await getAuthUser(c);
@@ -1867,6 +1921,7 @@ app.post('/invites/:code/accept', async (c) => {
   const now = new Date().toISOString();
 
   // Add user to team and mark invite as used
+  // Note: User will go through simplified onboarding to add personal info
   await c.env.DB.batch([
     c.env.DB.prepare(`
       INSERT INTO team_members (team_id, user_id, role, joined_at)
@@ -1972,6 +2027,105 @@ app.delete('/invites/:code', async (c) => {
 
 // ============================================================
 // Encryption Key endpoints
+// ============================================================
+// Memory Access Tracking
+// ============================================================
+
+// Log memory file access (called by MCP server)
+app.post('/memory/access', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const membership = await c.env.DB.prepare(`
+    SELECT team_id FROM team_members WHERE user_id = ? LIMIT 1
+  `).bind(user.id).first<{ team_id: string }>();
+
+  if (!membership) {
+    return c.json({ error: 'No team' }, 400);
+  }
+
+  const body = await c.req.json<{
+    fileType: 'small' | 'medium' | 'large';
+    action?: 'read' | 'write';
+    repoName?: string;
+  }>();
+
+  if (!body.fileType || !['small', 'medium', 'large'].includes(body.fileType)) {
+    return c.json({ error: 'Invalid fileType' }, 400);
+  }
+
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await c.env.DB.prepare(`
+    INSERT INTO memory_access_logs (id, team_id, user_id, repo_name, file_type, action, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    membership.team_id,
+    user.id,
+    body.repoName || null,
+    body.fileType,
+    body.action || 'read',
+    now
+  ).run();
+
+  return c.json({ success: true });
+});
+
+// Get team activity (memory access logs)
+app.get('/teams/activity', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const membership = await c.env.DB.prepare(`
+    SELECT team_id FROM team_members WHERE user_id = ? LIMIT 1
+  `).bind(user.id).first<{ team_id: string }>();
+
+  if (!membership) {
+    return c.json({ activity: [] });
+  }
+
+  // Get recent activity with user info
+  const result = await c.env.DB.prepare(`
+    SELECT
+      mal.id,
+      mal.file_type,
+      mal.action,
+      mal.repo_name,
+      mal.created_at,
+      u.id as user_id,
+      u.name as user_name,
+      u.avatar_url,
+      u.github_username
+    FROM memory_access_logs mal
+    JOIN users u ON u.id = mal.user_id
+    WHERE mal.team_id = ?
+    ORDER BY mal.created_at DESC
+    LIMIT 50
+  `).bind(membership.team_id).all();
+
+  return c.json({
+    activity: (result.results || []).map((row: Record<string, unknown>) => ({
+      id: row.id,
+      fileType: row.file_type,
+      action: row.action,
+      repoName: row.repo_name,
+      createdAt: row.created_at,
+      user: {
+        id: row.user_id,
+        name: row.user_name,
+        avatarUrl: row.avatar_url,
+        githubUsername: row.github_username,
+      },
+    })),
+  });
+});
+
 // ============================================================
 
 // Get encryption key for user's team (requires valid seat)

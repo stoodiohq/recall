@@ -224,6 +224,29 @@ function writeRecallFile(filename: string, content: string, key: string): void {
 }
 
 /**
+ * Log memory access to the API (non-blocking)
+ */
+async function logMemoryAccess(
+  token: string,
+  fileType: 'small' | 'medium' | 'large',
+  action: 'read' | 'write' = 'read'
+): Promise<void> {
+  const repoName = getCurrentRepoName();
+
+  // Fire and forget - don't block on logging
+  fetch(`${API_URL}/memory/access`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fileType, action, repoName }),
+  }).catch(() => {
+    // Silently ignore logging failures
+  });
+}
+
+/**
  * Get current repo name from git
  */
 function getCurrentRepoName(): string | null {
@@ -331,6 +354,9 @@ server.registerTool('recall_get_context', {
     };
   }
 
+  // Log access (non-blocking)
+  logMemoryAccess(config.token, 'small', 'read');
+
   return { content: [{ type: 'text', text: smallContent }] };
 });
 
@@ -361,6 +387,9 @@ server.registerTool('recall_get_history', {
       content: [{ type: 'text', text: 'No session history yet. Use recall_save_session to start building history.' }],
     };
   }
+
+  // Log access (non-blocking)
+  logMemoryAccess(config.token, 'medium', 'read');
 
   return { content: [{ type: 'text', text: mediumContent }] };
 });
@@ -472,6 +501,11 @@ server.registerTool('recall_save_session', {
   writeRecallFile('small.md', smallContent, teamKey.key);
   writeRecallFile('medium.md', mediumContent, teamKey.key);
   writeRecallFile('large.md', largeContent, teamKey.key);
+
+  // Log write activity (non-blocking)
+  logMemoryAccess(config.token, 'small', 'write');
+  logMemoryAccess(config.token, 'medium', 'write');
+  logMemoryAccess(config.token, 'large', 'write');
 
   return {
     content: [{ type: 'text', text: `Session saved to .recall/\n\nYour team will see this context in their next session. Files are encrypted with your team key.` }],

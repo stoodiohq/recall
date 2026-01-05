@@ -243,6 +243,133 @@ function InitializeStep({
   );
 }
 
+function InstallSection() {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [apiToken, setApiToken] = useState<string | null>(null);
+  const [generatingToken, setGeneratingToken] = useState(false);
+
+  const handleExpand = async () => {
+    if (!expanded && !apiToken) {
+      setGeneratingToken(true);
+      try {
+        const token = getToken();
+        const response = await fetch(`${API_URL}/auth/token`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: 'MCP Token' }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setApiToken(data.token);
+        }
+      } catch (err) {
+        console.error('Failed to generate token:', err);
+      } finally {
+        setGeneratingToken(false);
+      }
+    }
+    setExpanded(!expanded);
+  };
+
+  const installCommand = apiToken ? `npx recall-mcp-server install ${apiToken}` : '';
+
+  const handleCopy = () => {
+    if (!installCommand) return;
+    navigator.clipboard.writeText(installCommand);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="bg-bg-elevated border border-border-subtle rounded-lg overflow-hidden">
+      <button
+        onClick={handleExpand}
+        className="w-full flex items-center justify-between p-5 text-left hover:bg-bg-base/50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-cyan-500/20 to-purple-500/20 rounded-lg flex items-center justify-center">
+            <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </div>
+          <div>
+            <p className="font-medium text-text-primary">Install on another tool</p>
+            <p className="text-sm text-text-tertiary">Add Recall to Cursor, Windsurf, or another Claude Code instance</p>
+          </div>
+        </div>
+        <svg
+          className={`w-5 h-5 text-text-tertiary transition-transform ${expanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="px-5 pb-5 pt-0 border-t border-border-subtle">
+          <div className="pt-4 space-y-4">
+            {generatingToken ? (
+              <div className="flex items-center justify-center py-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-text-secondary">Generating install command...</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-text-secondary text-sm">
+                  Open your system terminal (Terminal, iTerm, etc.) and run this command:
+                </p>
+                <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between p-4">
+                    <code className="text-cyan-400 font-mono text-sm break-all flex-1 mr-4">
+                      {installCommand || 'Loading...'}
+                    </code>
+                    <button
+                      onClick={handleCopy}
+                      disabled={!apiToken}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
+                        copied
+                          ? 'bg-green-500/20 text-green-400'
+                          : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
+                      } disabled:opacity-50`}
+                    >
+                      {copied ? (
+                        <>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Copied!
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-text-tertiary text-xs">
+                  The command auto-detects your AI tool and configures Recall. Restart the tool after running.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IntegrateStep({
   hasMcpConnection,
   lastMcpConnection
@@ -325,7 +452,10 @@ function IntegrateStep({
 
   return (
     <div className="space-y-4">
-      <p className="text-text-secondary">Run this command in your terminal to install Recall:</p>
+      <p className="text-text-secondary">
+        Open your system terminal (Terminal, iTerm, etc.) and run this command.
+        It will automatically configure your AI tool.
+      </p>
 
       {/* Install Command */}
       <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
@@ -487,6 +617,31 @@ function DashboardContent() {
   const [initializingRepos, setInitializingRepos] = useState<Set<string>>(new Set());
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
+
+  // Check for first-time setup completion (show celebration once)
+  useEffect(() => {
+    if (!user || !license || reposLoading) return;
+
+    const hasSubscription = license?.valid && license.tier;
+    const hasRepos = repos.length > 0;
+    const hasInitializedRepos = repos.some(r => r.initializedAt);
+    const hasMcpConnection = !!user.lastMcpConnection;
+    const hasConnectedRepos = hasRepos && hasInitializedRepos;
+
+    const isSetupComplete = hasSubscription && hasConnectedRepos && hasMcpConnection;
+
+    if (isSetupComplete) {
+      const celebratedKey = `recall_celebrated_${user.id}`;
+      const hasCelebrated = localStorage.getItem(celebratedKey);
+      if (!hasCelebrated) {
+        setShowCelebration(true);
+        localStorage.setItem(celebratedKey, 'true');
+        const timer = setTimeout(() => setShowCelebration(false), 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [user, license, repos, reposLoading]);
 
   const handleCreateInvite = async () => {
     const token = getToken();
@@ -678,12 +833,12 @@ function DashboardContent() {
                   <p className="text-text-tertiary text-xs uppercase tracking-wider">Team</p>
                   {user.team ? (
                     <div className="flex items-center justify-between">
-                      <p className="text-text-primary">{user.team.name}</p>
-                      {(user.team.role === 'owner' || user.team.role === 'admin') && (
-                        <button onClick={handleCreateInvite} disabled={creatingInvite} className="text-xs text-cyan-400 hover:underline disabled:opacity-50">
-                          {creatingInvite ? 'Creating...' : 'Invite'}
-                        </button>
-                      )}
+                      <a href="/dashboard/team" className="text-text-primary hover:text-cyan-400 transition-colors">
+                        {user.team.name}
+                      </a>
+                      <a href="/dashboard/team" className="text-xs text-cyan-400 hover:underline">
+                        Manage
+                      </a>
                     </div>
                   ) : (
                     <p className="text-text-tertiary text-sm">No team</p>
@@ -721,63 +876,135 @@ function DashboardContent() {
         {/* Setup Complete State */}
         {setupComplete ? (
           <div className="space-y-8">
-            {/* Success Header */}
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mx-auto">
-                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
+            {/* Celebration Header (first time only) */}
+            {showCelebration ? (
+              <div className="text-center space-y-6 py-8">
+                <div className="w-20 h-20 bg-gradient-to-br from-green-400 to-cyan-500 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/20 animate-pulse">
+                  <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div>
+                  <h1 className="text-4xl font-bold text-text-primary">Recall is Active</h1>
+                  <p className="text-xl text-text-secondary mt-3">
+                    Just start coding. Your AI assistant now has team memory.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-text-primary">Recall is Active</h1>
-                <p className="text-text-secondary mt-1">
-                  Last connected {user.lastMcpConnection ? getTimeAgo(user.lastMcpConnection) : 'never'}
-                </p>
+            ) : (
+              /* Simple Active Header (return visits) */
+              <div className="flex items-center gap-4 py-4">
+                <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
+                  <span className="w-3 h-3 bg-green-400 rounded-full animate-pulse" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-text-primary">Recall Active</h1>
+                  <p className="text-text-secondary">Your AI has team memory. Just start coding.</p>
+                </div>
+              </div>
+            )}
+
+            {/* What to do now */}
+            <div className="bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20 rounded-xl p-6">
+              <h2 className="text-lg font-semibold text-text-primary mb-4">How it works</h2>
+
+              {/* What happens automatically */}
+              <div className="bg-bg-base/50 border border-border-subtle rounded-lg p-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 bg-green-500/20 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-text-primary font-medium">Just work like normal</p>
+                    <p className="text-text-secondary text-sm mt-1">
+                      Every time you start a session, Recall automatically gives your AI a small summary of
+                      recent work and key decisions. Your AI won't forget what you worked on yesterday or
+                      what your teammate decided last week.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hotwords */}
+              <div className="space-y-4">
+                <p className="text-text-tertiary text-sm uppercase tracking-wider font-medium">Need more context?</p>
+                <p className="text-text-secondary text-sm -mt-2">Say these words when you need deeper memory:</p>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <code className="bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full text-sm font-mono font-medium">remember</code>
+                    </div>
+                    <p className="text-text-secondary text-sm">
+                      Load recent session context. Use when you want your AI to recall what you worked on recently.
+                    </p>
+                    <p className="text-text-tertiary text-xs mt-2">
+                      Low token usage - good for daily use
+                    </p>
+                  </div>
+                  <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <code className="bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full text-sm font-mono font-medium">ultra remember</code>
+                    </div>
+                    <p className="text-text-secondary text-sm">
+                      Load full project history. Best for onboarding new team members or complex, long-running features.
+                    </p>
+                    <p className="text-text-tertiary text-xs mt-2">
+                      Higher token usage - worth it for deep context
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Quick Stats */}
-            <div className="grid sm:grid-cols-3 gap-4">
-              <div className="bg-bg-elevated border border-border-subtle rounded-lg p-4">
-                <p className="text-text-tertiary text-sm">Repositories</p>
-                <p className="text-2xl font-bold text-text-primary">{repos.length}</p>
-              </div>
-              <div className="bg-bg-elevated border border-border-subtle rounded-lg p-4">
-                <p className="text-text-tertiary text-sm">Initialized</p>
-                <p className="text-2xl font-bold text-green-400">{repos.filter(r => r.initializedAt).length}</p>
-              </div>
-              <div className="bg-bg-elevated border border-border-subtle rounded-lg p-4">
-                <p className="text-text-tertiary text-sm">Status</p>
-                <p className="text-lg font-bold text-green-400 flex items-center gap-2">
-                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                  Connected
-                </p>
-              </div>
-            </div>
-
-            {/* Repositories List */}
-            <div className="bg-bg-elevated border border-border-subtle rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-text-primary">Repositories</h2>
+            {/* Connected Repos - Compact */}
+            <div className="bg-bg-elevated border border-border-subtle rounded-lg p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-2 text-green-400">
+                    <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                    <span className="text-sm font-medium">Connected</span>
+                  </span>
+                  <span className="text-text-tertiary text-sm">
+                    {repos.length} {repos.length === 1 ? 'repository' : 'repositories'}
+                  </span>
+                </div>
                 <a href="/dashboard/repos" className="text-sm text-cyan-400 hover:underline">Manage</a>
               </div>
-              <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
                 {repos.map((repo) => (
-                  <div key={repo.id} className="flex items-center justify-between p-3 bg-bg-base border border-border-subtle rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <svg className="w-4 h-4 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                      <span className="text-text-primary text-sm">{repo.fullName}</span>
-                    </div>
-                    <span className="flex items-center gap-1.5 text-xs text-green-400">
-                      <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
-                      Active
-                    </span>
-                  </div>
+                  <span key={repo.id} className="inline-flex items-center gap-2 bg-bg-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary">
+                    <svg className="w-3.5 h-3.5 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    {repo.fullName}
+                  </span>
                 ))}
               </div>
             </div>
+
+            {/* Tips */}
+            <div className="bg-bg-elevated border border-border-subtle rounded-lg p-5">
+              <h3 className="text-sm font-medium text-text-primary mb-3">Tips</h3>
+              <ul className="space-y-2 text-sm text-text-secondary">
+                <li className="flex items-start gap-2">
+                  <span className="text-cyan-400 mt-0.5">•</span>
+                  <span>Your AI will automatically see team context at the start of each session</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-cyan-400 mt-0.5">•</span>
+                  <span>Important decisions and context are saved automatically as you work</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-cyan-400 mt-0.5">•</span>
+                  <span>Team members with Recall installed will share the same context</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Install on Another Tool */}
+            <InstallSection />
           </div>
         ) : (
           /* Setup In Progress */

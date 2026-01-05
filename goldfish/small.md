@@ -1,62 +1,44 @@
 # Recall - Team Memory for AI Coding Assistants
 
-Sessions: 4 | Last: 2026-01-04
-Tokens: small ~1.2k | medium ~8k | large ~20k
-
-## What It Is
-Git-native team memory for AI coding assistants. Captures session context, creates AI summaries, stores encrypted in `.recall/` folder, syncs via git. **The value is in READING** - AI starts every session with full repo history.
+Sessions: 6 | Last: 2026-01-05
+Tokens: small ~1.5k | medium ~10k | large ~25k
 
 ## Current Status
-- **Web:** LIVE at https://recall.team
+- **MCP Server:** LIVE on npm as `recall-mcp-server@0.2.0`
+- **Web:** LIVE at https://recall.team (Cloudflare Pages)
 - **API:** https://recall-api.stoodiohq.workers.dev
-- **GitHub:** stoodiohq/recall
-- **Phase:** Product definition complete, architecture locked in
+- **GitHub OAuth:** Migrated to StoodioHQ org (was personal raydawg88)
 
-## Core Value Proposition
-AI reads repo memory at session start → knows what was built, what failed, why decisions were made → never repeats mistakes, never starts from zero.
+## What's Working
+1. One-command install: `npx recall-mcp-server install <token>`
+2. GitHub OAuth signup/login flow
+3. Dashboard with setup wizard (subscription → repos → MCP install)
+4. "Recall is Active" page with magic words and tips
 
-## Architecture Decisions (Session 4)
+## Known Issues (Session 6)
+**Install script only configures ONE tool** - Auto-detects Claude Code > Cursor > Windsurf, uses first found. Need `--tool` flag for users with multiple AI tools.
 
-### Licensing: Encrypted Summaries
-- `.recall/*.enc` files in git (encrypted, useless without key)
-- Team encryption key stored on Recall servers
-- Valid seat = CLI fetches key, decrypts, loads into AI
-- No seat = "Contact admin for access" (AI starts from zero)
-- Recall manages keys, users never see them
+**Success state too celebratory** - Big checkmark shows every visit, should only show on first completion, then simpler "active" state.
 
-### UX: Invisible/Automatic
-- First user signs up → team created, seat assigned
-- Recall runs invisibly in background
-- Session end → auto-capture, summarize, encrypt, commit
-- Session start → check seat, decrypt, load context
-- Hotwords: "remember" (medium), "ultra remember" (large)
-- No manual commands in daily workflow
+## Magic Words
+- `remember` - Load recent context (low tokens, daily use)
+- `ultra remember` - Full project history (high tokens, onboarding/complex features)
 
-### Pricing: Per Seat
-- Free: Solo dev, 1 repo, 30 days
-- Team: $12/user/mo, unlimited repos, 1 year history
-- Enterprise: $25-35/user/mo, BYOK, SSO, unlimited history
-
-### AI Agnostic
-- **Tools:** Claude Code, Cursor, Codex, Gemini CLI, Anti-gravity, VS Code + Copilot
-- **Summarization:** Recall-owned by default, BYOK for enterprise
-
-## Key Files
-- **CLI:** `/cli/` - Node.js, extractors for each AI tool
-- **Web:** `/web/` - Next.js static on Cloudflare Pages
-- **Cloud:** `/cloud/` - Hono + D1 API
-- **Research:** `/research/dev-team-workflows.md`
-
-## What's Built
-- Website, OAuth, dashboard, mock checkout
-- CLI structure with extractors
-- Local snapshot generation
+## Architecture (Locked)
+- Encrypted `.recall/` files in git (useless without key)
+- Team encryption key on Recall servers
+- Valid seat = CLI fetches key, decrypts, loads context
+- No seat = AI starts from zero
 
 ## What's NOT Built
-- AI summarization (the core feature)
-- Encryption layer
-- License/seat validation
-- npm publishing
+- Stripe payment integration (mock checkout only)
+- AI summarization (manual memory files for now)
+- Encryption layer (files unencrypted currently)
+
+## Key Files
+- `/mcp/` - MCP server (the npm package)
+- `/web/` - Next.js dashboard on Cloudflare Pages
+- `/cloud/` - Hono API on Cloudflare Workers
 
 ---
 *medium.md = session history | large.md = full transcripts*
