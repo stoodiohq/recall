@@ -1,3 +1,5 @@
-# Inbox
+# Recall - Inbox
 
-_No pending sessions_
+All sessions processed. Memory up to date.
+
+Last updated: 2026-01-04
