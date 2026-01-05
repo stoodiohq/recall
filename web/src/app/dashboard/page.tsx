@@ -593,13 +593,14 @@ function DashboardContent() {
     if (user) fetchRepos();
   }, [user]);
 
-  // Poll for MCP connection status every 30 seconds
+  // Poll for MCP connection status every 5 seconds while waiting
   useEffect(() => {
     if (!user || user.lastMcpConnection) return;
 
+    // Poll frequently while waiting for first connection
     const interval = setInterval(() => {
       refresh();
-    }, 30000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [user, refresh]);

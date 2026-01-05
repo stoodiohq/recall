@@ -589,6 +589,15 @@ server.registerTool('recall_status', {
 // Start the server
 async function main() {
   const transport = new StdioServerTransport();
+
+  // Ping the API on startup to register connection (updates last_mcp_connection)
+  const config = loadConfig();
+  if (config?.token) {
+    getTeamKey(config.token).catch(() => {
+      // Silently ignore - just trying to register the connection
+    });
+  }
+
   await server.connect(transport);
   console.error('Recall MCP server started');
 }
