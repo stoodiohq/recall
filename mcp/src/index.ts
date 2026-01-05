@@ -210,10 +210,14 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
 
 /**
  * Read and decrypt a recall file
+ * @param filename - The file to read (e.g., 'small.md', 'medium.md', 'large.md')
+ * @param key - The decryption key
+ * @param recallDir - Optional: explicit .recall directory path. If not provided, uses getRecallDir()
  */
-function readRecallFile(filename: string, key: string): string | null {
-  const filePath = path.join(getRecallDir(), filename);
-  console.error(`[Recall] readRecallFile: ${filename}`);
+function readRecallFile(filename: string, key: string, recallDir?: string): string | null {
+  const dir = recallDir || getRecallDir();
+  const filePath = path.join(dir, filename);
+  console.error(`[Recall] readRecallFile: ${filename} from ${dir}`);
 
   if (!fs.existsSync(filePath)) {
     console.error(`[Recall] File not found: ${filePath}`);
@@ -303,14 +307,15 @@ async function logMemoryAccess(
 }
 
 /**
- * Get current repo name from git
+ * Get repo name from git for a specific directory
  */
-function getCurrentRepoName(): string | null {
+function getRepoNameFromPath(projectPath: string): string | null {
   try {
     const { execSync } = require('child_process');
     const remote = execSync('git config --get remote.origin.url', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: projectPath,
     }).trim();
 
     const match = remote.match(/github\.com[:/](.+?)(?:\.git)?$/);
@@ -320,7 +325,14 @@ function getCurrentRepoName(): string | null {
   } catch {
     // Not a git repo or no remote
   }
-  return path.basename(process.cwd());
+  return path.basename(projectPath);
+}
+
+/**
+ * Get current repo name from git (uses cwd)
+ */
+function getCurrentRepoName(): string | null {
+  return getRepoNameFromPath(process.cwd());
 }
 
 /**
@@ -641,7 +653,7 @@ async function generateSummaries(
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.4.8',
+  version: '0.4.9',
 }, {
   capabilities: {
     tools: {},
@@ -1015,7 +1027,17 @@ server.registerTool('recall_get_context', {
 // Tool: recall_get_history - Get detailed session history
 server.registerTool('recall_get_history', {
   description: 'Get detailed session history (medium.md). This includes more context than recall_get_context but uses more tokens.',
-}, async () => {
+  inputSchema: z.object({
+    projectPath: z.string().optional().describe('Path to the project root. REQUIRED to ensure correct repo context. Use the absolute path to the project you are working in.'),
+  }).shape,
+}, async (args) => {
+  const projectPath = args.projectPath as string | undefined;
+  const effectivePath = projectPath || process.cwd();
+
+  console.error(`[Recall] recall_get_history called`);
+  console.error(`[Recall]   projectPath: ${projectPath || '(not provided - using cwd)'}`);
+  console.error(`[Recall]   effective path: ${effectivePath}`);
+
   const config = loadConfig();
   if (!config?.token) {
     return {
@@ -1032,24 +1054,47 @@ server.registerTool('recall_get_history', {
     };
   }
 
-  const mediumContent = readRecallFile('medium.md', teamKey.key);
+  // Get repo name from the project path (ties to GitHub repo)
+  const repoName = getRepoNameFromPath(effectivePath);
+  const recallDir = path.join(effectivePath, RECALL_DIR);
 
-  if (!mediumContent) {
+  console.error(`[Recall]   repo: ${repoName}`);
+  console.error(`[Recall]   recallDir: ${recallDir}`);
+
+  if (!fs.existsSync(recallDir)) {
     return {
-      content: [{ type: 'text', text: 'No session history yet. Use recall_save_session to start building history.' }],
+      content: [{ type: 'text', text: `No .recall/ directory found at ${effectivePath}\n\nMake sure you provide the correct projectPath parameter.` }],
     };
   }
 
-  // Log access (non-blocking)
+  const mediumContent = readRecallFile('medium.md', teamKey.key, recallDir);
+
+  if (!mediumContent) {
+    return {
+      content: [{ type: 'text', text: `No session history yet for ${repoName}.\n\nUse recall_save_session to start building history.` }],
+    };
+  }
+
+  // Log access (non-blocking) - includes repo name for tracking
   logMemoryAccess(config.token, 'medium', 'read');
 
-  return { content: [{ type: 'text', text: mediumContent }] };
+  return { content: [{ type: 'text', text: `[Repo: ${repoName}]\n\n${mediumContent}` }] };
 });
 
 // Tool: recall_get_transcripts - Get full session transcripts (large.md)
 server.registerTool('recall_get_transcripts', {
   description: 'Get full session transcripts (large.md). WARNING: This can be very large and use many tokens. Only use when you need complete historical details.',
-}, async () => {
+  inputSchema: z.object({
+    projectPath: z.string().optional().describe('Path to the project root. REQUIRED to ensure correct repo context. Use the absolute path to the project you are working in.'),
+  }).shape,
+}, async (args) => {
+  const projectPath = args.projectPath as string | undefined;
+  const effectivePath = projectPath || process.cwd();
+
+  console.error(`[Recall] recall_get_transcripts called`);
+  console.error(`[Recall]   projectPath: ${projectPath || '(not provided - using cwd)'}`);
+  console.error(`[Recall]   effective path: ${effectivePath}`);
+
   const config = loadConfig();
   if (!config?.token) {
     return {
@@ -1066,18 +1111,31 @@ server.registerTool('recall_get_transcripts', {
     };
   }
 
-  const largeContent = readRecallFile('large.md', teamKey.key);
+  // Get repo name from the project path (ties to GitHub repo)
+  const repoName = getRepoNameFromPath(effectivePath);
+  const recallDir = path.join(effectivePath, RECALL_DIR);
 
-  if (!largeContent) {
+  console.error(`[Recall]   repo: ${repoName}`);
+  console.error(`[Recall]   recallDir: ${recallDir}`);
+
+  if (!fs.existsSync(recallDir)) {
     return {
-      content: [{ type: 'text', text: 'No transcripts yet. Use recall_save_session to start building history.' }],
+      content: [{ type: 'text', text: `No .recall/ directory found at ${effectivePath}\n\nMake sure you provide the correct projectPath parameter.` }],
     };
   }
 
-  // Log access (non-blocking)
+  const largeContent = readRecallFile('large.md', teamKey.key, recallDir);
+
+  if (!largeContent) {
+    return {
+      content: [{ type: 'text', text: `No transcripts yet for ${repoName}.\n\nUse recall_save_session to start building history.` }],
+    };
+  }
+
+  // Log access (non-blocking) - includes repo name for tracking
   logMemoryAccess(config.token, 'large', 'read');
 
-  return { content: [{ type: 'text', text: largeContent }] };
+  return { content: [{ type: 'text', text: `[Repo: ${repoName}]\n\n${largeContent}` }] };
 });
 
 // Tool: recall_import_transcript - Import full session transcript from JSONL file
