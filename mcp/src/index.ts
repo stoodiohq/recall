@@ -641,7 +641,7 @@ async function generateSummaries(
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.4.7',
+  version: '0.4.8',
 }, {
   capabilities: {
     tools: {},
@@ -1687,27 +1687,79 @@ function checkProjectRecallSetup(): void {
   }
 }
 
+type SupportedTool = 'claude' | 'cursor' | 'windsurf';
+
+interface ToolConfig {
+  name: string;
+  configPath: string;
+  exists: boolean;
+}
+
 /**
- * Get the MCP config file path for the current platform/tool
- * Priority: Claude Code (~/.claude/mcp.json) > Legacy (~/.mcp.json) > Cursor > Windsurf
+ * Get all supported tool configurations
  */
-function getMcpConfigPath(): string {
+function getAllToolConfigs(): Record<SupportedTool, ToolConfig> {
   const home = os.homedir();
 
-  // Check which config files exist
-  const claudeConfig = path.join(home, '.claude', 'mcp.json');  // New Claude Code location
-  const legacyClaudeConfig = path.join(home, '.mcp.json');       // Old Claude Code location
-  const cursorConfig = path.join(home, '.cursor', 'mcp.json');
-  const windsurfConfig = path.join(home, '.codeium', 'windsurf', 'mcp.json');
+  const configs: Record<SupportedTool, ToolConfig> = {
+    claude: {
+      name: 'Claude Code',
+      configPath: path.join(home, '.claude', 'mcp.json'),
+      exists: false,
+    },
+    cursor: {
+      name: 'Cursor',
+      configPath: path.join(home, '.cursor', 'mcp.json'),
+      exists: false,
+    },
+    windsurf: {
+      name: 'Windsurf',
+      configPath: path.join(home, '.codeium', 'windsurf', 'mcp.json'),
+      exists: false,
+    },
+  };
 
-  // If any exist, use the first one found
-  if (fs.existsSync(claudeConfig)) return claudeConfig;
-  if (fs.existsSync(legacyClaudeConfig)) return legacyClaudeConfig;
-  if (fs.existsSync(cursorConfig)) return cursorConfig;
-  if (fs.existsSync(windsurfConfig)) return windsurfConfig;
+  // Check which configs exist
+  for (const tool of Object.keys(configs) as SupportedTool[]) {
+    configs[tool].exists = fs.existsSync(configs[tool].configPath);
+  }
 
-  // Default to new Claude Code config location
-  return claudeConfig;
+  return configs;
+}
+
+/**
+ * Get the MCP config file path for a specific tool
+ * If no tool specified, tries to auto-detect or prompts user
+ */
+function getMcpConfigPath(tool?: SupportedTool): { path: string; tool: SupportedTool } | { error: string } {
+  const configs = getAllToolConfigs();
+
+  // If tool specified, use that
+  if (tool) {
+    if (!configs[tool]) {
+      return { error: `Unknown tool: ${tool}. Supported: claude, cursor, windsurf` };
+    }
+    return { path: configs[tool].configPath, tool };
+  }
+
+  // Find which tools have existing configs
+  const existingTools = (Object.keys(configs) as SupportedTool[]).filter(t => configs[t].exists);
+
+  // If multiple configs exist, require user to specify
+  if (existingTools.length > 1) {
+    const toolList = existingTools.map(t => `  - ${configs[t].name} (--tool ${t})`).join('\n');
+    return {
+      error: `Multiple AI tools detected with existing configs:\n${toolList}\n\nPlease specify which tool to install for:\n  npx recall-mcp-server install <token> --tool claude`
+    };
+  }
+
+  // If exactly one config exists, use that
+  if (existingTools.length === 1) {
+    return { path: configs[existingTools[0]].configPath, tool: existingTools[0] };
+  }
+
+  // No configs exist - default to Claude
+  return { path: configs.claude.configPath, tool: 'claude' };
 }
 
 /**
@@ -1764,9 +1816,19 @@ Use \`recall_save_session\` to save what was accomplished.
 /**
  * Install Recall MCP server into the user's MCP config
  */
-async function installRecall(token: string): Promise<void> {
-  const configPath = getMcpConfigPath();
-  console.log(`\n🔧 Installing Recall MCP server...\n`);
+async function installRecall(token: string, tool?: SupportedTool): Promise<void> {
+  const configResult = getMcpConfigPath(tool);
+
+  // Check for errors (multiple tools detected, etc.)
+  if ('error' in configResult) {
+    console.error(`\n❌ ${configResult.error}\n`);
+    process.exit(1);
+  }
+
+  const { path: configPath, tool: selectedTool } = configResult;
+  const configs = getAllToolConfigs();
+
+  console.log(`\n🔧 Installing Recall MCP server for ${configs[selectedTool].name}...\n`);
 
   // Validate token first
   console.log('Validating token...');
@@ -1848,7 +1910,9 @@ async function installRecall(token: string): Promise<void> {
   }
 
   console.log(`
-✅ Recall installed successfully!
+✅ Recall installed successfully for ${configs[selectedTool].name}!
+
+Config written to: ${configPath}
 
 What happens now:
 • Team memory (small.md) loads automatically at session start
@@ -1857,11 +1921,28 @@ What happens now:
 • All reads are tracked in your team dashboard
 
 Next steps:
-1. Restart your AI coding tool (Claude Code, Cursor, or Windsurf)
+1. Restart ${configs[selectedTool].name} completely (Cmd+Q on Mac)
 2. Start a new session - your team memory will load automatically
 
 Need help? Visit https://recall.team/docs
 `);
+}
+
+/**
+ * Parse --tool flag from args
+ */
+function parseToolFlag(args: string[]): SupportedTool | undefined {
+  const toolIndex = args.findIndex(a => a === '--tool' || a === '-t');
+  if (toolIndex !== -1 && args[toolIndex + 1]) {
+    const tool = args[toolIndex + 1].toLowerCase();
+    if (tool === 'claude' || tool === 'cursor' || tool === 'windsurf') {
+      return tool;
+    }
+    console.error(`❌ Unknown tool: ${tool}`);
+    console.error('Supported tools: claude, cursor, windsurf');
+    process.exit(1);
+  }
+  return undefined;
 }
 
 // Handle CLI commands
@@ -1869,15 +1950,17 @@ async function handleCli(): Promise<boolean> {
   const args = process.argv.slice(2);
 
   if (args[0] === 'install') {
-    const token = args[1];
+    // Find token (first arg that's not a flag)
+    const token = args.find((a, i) => i > 0 && !a.startsWith('-') && args[i - 1] !== '--tool' && args[i - 1] !== '-t');
 
     if (!token) {
-      console.error('Usage: npx recall-mcp-server install <token>');
+      console.error('Usage: npx recall-mcp-server install <token> [--tool claude|cursor|windsurf]');
       console.error('\nGet your token from https://recall.team/dashboard');
       process.exit(1);
     }
 
-    await installRecall(token);
+    const tool = parseToolFlag(args);
+    await installRecall(token, tool);
     return true; // Handled CLI command, don't start server
   }
 
@@ -1886,8 +1969,18 @@ async function handleCli(): Promise<boolean> {
 Recall MCP Server - Team memory for AI coding tools
 
 Usage:
-  npx recall-mcp-server install <token>   Install and configure Recall
-  npx recall-mcp-server                   Start MCP server (called by AI tools)
+  npx recall-mcp-server install <token> [--tool <tool>]   Install and configure Recall
+  npx recall-mcp-server                                   Start MCP server (called by AI tools)
+
+Options:
+  --tool, -t <tool>   Specify which AI tool to install for: claude, cursor, windsurf
+                      Required if multiple tools are installed on your system
+
+Examples:
+  npx recall-mcp-server install abc123                    Auto-detect tool (or prompt if multiple)
+  npx recall-mcp-server install abc123 --tool claude      Install for Claude Code
+  npx recall-mcp-server install abc123 --tool cursor      Install for Cursor
+  npx recall-mcp-server install abc123 --tool windsurf    Install for Windsurf
 
 Get your token from https://recall.team/dashboard
 `);

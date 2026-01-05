@@ -1,89 +1,87 @@
 # Recall - Development History
 
-Sessions: 9 | Updated: 2026-01-05
+Sessions: 11 | Updated: 2026-01-05
+
+## 2026-01-05 (Session 11): AUTO-IMPORT IMPLEMENTED
+
+### The Core Problem
+Steven tested Recall but his files appeared empty. When he had to run `recall_import_all_sessions` manually, Ray's feedback: "he shouldn't have to do this, if he's doing this, that means recall isn't working properly, that is literally what recall is suppose to do."
+
+### The Solution (v0.4.7)
+Implemented automatic session import on MCP startup:
+
+1. **Imported sessions tracker** - `.recall/imported-sessions.json` tracks:
+   - Which sessions have been imported
+   - Their modification times (to detect updates)
+
+2. **autoImportNewSessions()** - Runs on every MCP startup:
+   - Finds all JSONL session files for the project
+   - Compares with tracker by filename + mtime
+   - Imports any new/updated sessions to large.md
+   - Updates tracker
+
+3. **Called in main()** - Non-blocking, logs results
+
+Now: User opens Claude in Recall-enabled project -> MCP starts -> auto-import runs -> previous sessions already in large.md. No manual action needed.
+
+---
+
+## 2026-01-05 (Session 10): Bug Fixes & Steven Debugging
+
+### Issues Fixed
+1. **MCP not showing in /mcp** - User needed full restart (Cmd+Q, not just new session)
+2. **Stale data from recall_get_context** - Added `projectPath` parameter and debugging output
+3. **Session file finder** - Now checks parent directories too (for when Claude opened at parent level)
+4. **large.md importing** - Created `recall_import_all_sessions` tool to import ALL session JSONLs
+
+### Key Insight
+cwd issue: MCP server doesn't inherit project directory from Claude. Added debugging to show what directory it's reading from.
+
+---
 
 ## 2026-01-05 (Sessions 7-9): Auto-Context Loading Fix + Team Features
 
 ### The Core Problem We Solved
-Steven Ray installed Recall, opened Claude in a Recall-enabled project, said "summarize this project" - Recall didn't get called. Why? **MCP tools are opt-in.** Claude only calls them when it thinks they're relevant. Global ~/.claude/CLAUDE.md instructions get lost in context.
+Steven Ray installed Recall, opened Claude in a Recall-enabled project, said "summarize this project" - Recall didn't get called. Why? **MCP tools are opt-in.** Claude only calls them when it thinks they're relevant.
 
 ### The Solution (v0.3.2)
-Two-pronged approach:
-1. **Project CLAUDE.md on save/init:** When `recall_save_session` or new `recall_init` is called, create/update a CLAUDE.md in the project root with "CRITICAL: call `recall_get_context` immediately"
-2. **Startup check:** On MCP server startup, if `.recall/` exists but CLAUDE.md doesn't or lacks Recall section, auto-create it
-
-Claude reads project-level CLAUDE.md on session start. Instruction says to call Recall. Context loads.
+1. **Project CLAUDE.md on save/init:** Creates CLAUDE.md in project root with "CRITICAL: call `recall_get_context` immediately"
+2. **Startup check:** If `.recall/` exists but CLAUDE.md doesn't or lacks Recall section, auto-create it
 
 **Steven Ray tested. It works.**
 
 ### Team Features Built
-1. **Team management page** (`/dashboard/team`)
-   - Invite team members by email with role (member/admin)
-   - See pending invites and team members
-   - Remove/delete buttons (delete fully removes user from system)
-
-2. **Repos page permissions** (`/dashboard/repos`)
-   - Shows ALL team repos, not just user's GitHub repos
-   - Purple "Team" badge for repos added by others
-   - "Added by [name]" for repos user can't toggle
-   - Can only toggle repos you enabled
-
-3. **Activity tracking** (memory_access_logs table)
-   - Logs every read/write to memory files
-   - Shows in dashboard (who accessed what when)
-
-4. **Member deletion endpoint** (`DELETE /teams/members/:userId`)
-   - `fullDelete=true` removes from users table completely
-   - Clears foreign keys in team_invites, repos, api_tokens
-
-### Files Changed
-- `/mcp/src/index.ts` - createProjectClaudeMd(), checkProjectRecallSetup(), recall_init tool
-- `/mcp/package.json` - v0.3.2
-- `/cloud/src/index.ts` - DELETE /teams/members/:userId, repos with enabledBy info
-- `/web/src/app/dashboard/team/page.tsx` - invite form, member list, remove/delete buttons
-- `/web/src/app/dashboard/repos/page.tsx` - team repos, permissions
+1. Team management page (`/dashboard/team`)
+2. Repos page permissions (`/dashboard/repos`)
+3. Activity tracking (memory_access_logs table)
+4. Member deletion endpoint
 
 ---
 
-## 2026-01-05 (Sessions 5-6): MCP Server Launch & Dashboard Polish
+## 2026-01-05 (Sessions 5-6): MCP Server Launch
 
-### What Was Done
-1. **Published MCP server to npm** as `recall-mcp-server@0.2.0`
-2. **One-command install:** `npx recall-mcp-server install <token>`
-3. **Migrated GitHub OAuth** from personal (raydawg88) to StoodioHQ organization
-4. **Updated dashboard "Recall is Active" page**
-
-### Decisions Made
-- Install instructions must say "system terminal" not inside AI tool
-- Token usage warnings: `remember` = low, `ultra remember` = high
-- GitHub OAuth: "Recall by Stoodio" not "Ray Hernandez"
+- Published MCP server to npm as `recall-mcp-server`
+- One-command install: `npx recall-mcp-server install <token>`
+- Migrated GitHub OAuth from personal to StoodioHQ organization
 
 ---
 
-## 2026-01-04 (Session 4): Product Definition & Architecture
+## 2026-01-04 (Session 4): Product Definition
 
-### The Big Insight
-**The value is in READING, not writing.** When AI starts with full repo history - what was built, what failed, why decisions were made - it never repeats mistakes.
+**The value is in READING, not writing.** When AI starts with full repo history, it never repeats mistakes.
 
-### Licensing: Encrypted Summaries
-- `.recall/*.enc` files in git (encrypted, useless without key)
+### Licensing
+- Encrypted `.recall/` files in git (useless without key)
 - Team encryption key stored on Recall servers
-- Valid seat = CLI fetches key, decrypts, loads into AI
-
-### Pricing
-| Tier | Price | Limits |
-|------|-------|--------|
-| Free | $0 | Solo, 1 repo, 30 days |
-| Team | $12/user/mo | Unlimited repos, 1 year |
-| Enterprise | $25-35/user/mo | BYOK, SSO, unlimited |
+- Valid seat = CLI fetches key, decrypts, loads context
 
 ---
 
 ## 2026-01-04 (Session 3): Production Deployment
 
-- Deployed web to Cloudflare Pages (https://recall.team)
-- DNS moved from GoDaddy to Cloudflare nameservers
-- Fixed OAuth callback URL (API not web)
+- Deployed to Cloudflare Pages (https://recall.team)
+- DNS moved from GoDaddy to Cloudflare
+- Fixed OAuth callback URL
 
 ---
 
