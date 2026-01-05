@@ -39,12 +39,8 @@ const AI_TOOLS = [
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
       </svg>
     ),
-    configFile: '~/.claude.json',
-    instructions: 'Add to your claude.json mcpServers:',
-    config: `"recall": {
-  "command": "node",
-  "args": ["/path/to/recall/mcp/dist/index.js"]
-}`,
+    configFile: '~/.mcp.json',
+    instructions: 'Add to mcpServers in ~/.mcp.json:',
   },
   {
     id: 'cursor',
@@ -55,55 +51,18 @@ const AI_TOOLS = [
       </svg>
     ),
     configFile: '~/.cursor/mcp.json',
-    instructions: 'Add to your mcp.json:',
-    config: `{
-  "mcpServers": {
-    "recall": {
-      "command": "node",
-      "args": ["/path/to/recall/mcp/dist/index.js"]
-    }
-  }
-}`,
+    instructions: 'Add to mcpServers in mcp.json:',
   },
   {
-    id: 'gemini-cli',
-    name: 'Gemini CLI',
+    id: 'windsurf',
+    name: 'Windsurf',
     icon: (
       <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm0 18a8 8 0 118-8 8 8 0 01-8 8z" opacity="0.3"/>
-        <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <path d="M3 17l6-6 4 4 8-8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
       </svg>
     ),
-    configFile: '~/.gemini/settings.json',
-    instructions: 'Add to your settings.json:',
-    config: `{
-  "mcpServers": {
-    "recall": {
-      "command": "node",
-      "args": ["/path/to/recall/mcp/dist/index.js"]
-    }
-  }
-}`,
-  },
-  {
-    id: 'codex-cli',
-    name: 'OpenAI Codex CLI',
-    icon: (
-      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M12 2v4m0 12v4m-7-7H2m20 0h-3M5.6 5.6l2.1 2.1m8.6 8.6l2.1 2.1m0-12.8l-2.1 2.1m-8.6 8.6l-2.1 2.1"/>
-      </svg>
-    ),
-    configFile: '~/.codex/config.json',
-    instructions: 'Add to your config.json:',
-    config: `{
-  "mcpServers": {
-    "recall": {
-      "command": "node",
-      "args": ["/path/to/recall/mcp/dist/index.js"]
-    }
-  }
-}`,
+    configFile: '~/.codeium/windsurf/mcp.json',
+    instructions: 'Add to mcpServers in mcp.json:',
   },
 ];
 
@@ -362,25 +321,13 @@ function IntegrateStep({
   const getConfigForTool = (toolId: string) => {
     const tokenPlaceholder = apiToken || 'LOADING...';
 
-    if (toolId === 'claude-code') {
-      return `"recall": {
+    // All tools use the same format - just the entry to add to mcpServers
+    return `"recall": {
+  "type": "stdio",
   "command": "npx",
   "args": ["-y", "recall-mcp-server@latest"],
   "env": {
     "RECALL_API_TOKEN": "${tokenPlaceholder}"
-  }
-}`;
-    }
-
-    return `{
-  "mcpServers": {
-    "recall": {
-      "command": "npx",
-      "args": ["-y", "recall-mcp-server@latest"],
-      "env": {
-        "RECALL_API_TOKEN": "${tokenPlaceholder}"
-      }
-    }
   }
 }`;
   };
