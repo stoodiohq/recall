@@ -429,12 +429,28 @@ function DashboardContent() {
                   <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">Ready</span>
                 </div>
                 <p className="text-text-tertiary text-xs mb-3">Add to your claude_desktop_config.json:</p>
-                <pre className="bg-bg-elevated p-3 rounded text-xs text-text-secondary overflow-x-auto">
+                <div className="relative">
+                  <pre className="bg-bg-elevated p-3 pr-10 rounded text-xs text-text-secondary overflow-x-auto">
 {`"recall": {
   "command": "npx",
   "args": ["-y", "@recall/mcp-server"]
 }`}
-                </pre>
+                  </pre>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`"recall": {
+  "command": "npx",
+  "args": ["-y", "@recall/mcp-server"]
+}`);
+                    }}
+                    className="absolute top-2 right-2 p-1.5 text-text-tertiary hover:text-text-primary hover:bg-bg-base rounded transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               <div className="bg-bg-base border border-border-subtle rounded-lg p-4 opacity-60">
