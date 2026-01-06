@@ -49,6 +49,10 @@ interface Env {
   GITHUB_CLIENT_SECRET: string;
   JWT_SECRET: string;
   GEMINI_API_KEY?: string;
+  // Stripe
+  STRIPE_SECRET_KEY: string;
+  STRIPE_PRICE_ID: string;
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 interface RecallEvent {
@@ -100,6 +104,9 @@ interface Team {
   tier: string;
   seats: number;
   created_at: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  subscription_status?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -2675,6 +2682,268 @@ echo ""
       'Content-Type': 'text/plain',
     },
   });
+});
+
+// ============================================================
+// Stripe Checkout Endpoints
+// ============================================================
+
+// Create Stripe Checkout Session
+app.post('/checkout/create-session', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const body = await c.req.json<{ seats?: number; teamName?: string }>().catch(() => ({}));
+  
+  const seats = body.seats || 1;
+  const teamName = body.teamName?.trim();
+
+  if (!teamName) {
+    return c.json({ error: 'Team name is required' }, 400);
+  }
+
+  if (seats < 1 || seats > 100) {
+    return c.json({ error: 'Seats must be between 1 and 100' }, 400);
+  }
+
+  // Check if user already has a team
+  const existingTeam = await c.env.DB.prepare(`
+    SELECT t.* FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+    LIMIT 1
+  `).bind(user.id).first();
+
+  if (existingTeam) {
+    return c.json({ error: 'You already have a team. Manage your subscription in the dashboard.' }, 400);
+  }
+
+  // Create Stripe Checkout Session
+  const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+  
+  const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'mode': 'subscription',
+      'success_url': `${baseUrl}/dashboard?success=true`,
+      'cancel_url': `${baseUrl}/checkout?canceled=true`,
+      'line_items[0][price]': c.env.STRIPE_PRICE_ID,
+      'line_items[0][quantity]': seats.toString(),
+      'subscription_data[metadata][teamName]': teamName,
+      'subscription_data[metadata][userId]': user.id,
+      'subscription_data[metadata][seats]': seats.toString(),
+      'customer_email': user.email,
+      'allow_promotion_codes': 'true',
+    }),
+  });
+
+  if (!stripeResponse.ok) {
+    const error = await stripeResponse.text();
+    console.error('[Stripe] Checkout session error:', error);
+    return c.json({ error: 'Failed to create checkout session' }, 500);
+  }
+
+  const session = await stripeResponse.json() as { id: string; url: string };
+
+  return c.json({
+    sessionId: session.id,
+    checkoutUrl: session.url,
+  });
+});
+
+// Stripe Webhook Handler
+app.post('/webhooks/stripe', async (c) => {
+  const payload = await c.req.text();
+  const signature = c.req.header('stripe-signature');
+
+  // In production, verify the webhook signature
+  // For now, we'll process the event directly
+  // TODO: Add signature verification with STRIPE_WEBHOOK_SECRET
+  
+  let event: {
+    type: string;
+    data: {
+      object: {
+        id: string;
+        customer: string;
+        subscription?: string;
+        metadata?: Record<string, string>;
+        items?: { data: Array<{ quantity: number }> };
+      };
+    };
+  };
+
+  try {
+    event = JSON.parse(payload);
+  } catch (err) {
+    console.error('[Stripe Webhook] Invalid JSON:', err);
+    return c.json({ error: 'Invalid payload' }, 400);
+  }
+
+  console.log('[Stripe Webhook] Event:', event.type);
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    
+    // Get subscription details to access metadata
+    const subResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${session.subscription}`, {
+      headers: {
+        'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+      },
+    });
+
+    if (!subResponse.ok) {
+      console.error('[Stripe Webhook] Failed to fetch subscription');
+      return c.json({ error: 'Failed to fetch subscription' }, 500);
+    }
+
+    const subscription = await subResponse.json() as {
+      id: string;
+      customer: string;
+      metadata: Record<string, string>;
+      items: { data: Array<{ quantity: number }> };
+    };
+
+    const teamName = subscription.metadata.teamName;
+    const userId = subscription.metadata.userId;
+    const seats = parseInt(subscription.metadata.seats || '1', 10);
+    const customerId = subscription.customer;
+    const subscriptionId = subscription.id;
+
+    if (!teamName || !userId) {
+      console.error('[Stripe Webhook] Missing metadata:', subscription.metadata);
+      return c.json({ error: 'Missing metadata' }, 400);
+    }
+
+    // Check if team already exists for this subscription
+    const existingTeam = await c.env.DB.prepare(`
+      SELECT id FROM teams WHERE stripe_subscription_id = ?
+    `).bind(subscriptionId).first();
+
+    if (existingTeam) {
+      console.log('[Stripe Webhook] Team already exists for subscription:', subscriptionId);
+      return c.json({ received: true });
+    }
+
+    // Generate unique slug
+    let baseSlug = teamName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+    let slug = baseSlug;
+    let attempt = 0;
+
+    while (true) {
+      const existing = await c.env.DB.prepare('SELECT id FROM teams WHERE slug = ?').bind(slug).first();
+      if (!existing) break;
+      attempt++;
+      slug = `${baseSlug}-${attempt}`;
+    }
+
+    const teamId = generateId();
+    const keyId = generateId();
+    const now = new Date().toISOString();
+
+    // Generate team encryption key
+    const encryptionKey = await generateEncryptionKey();
+
+    // Create team with Stripe info
+    await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT INTO teams (id, name, slug, owner_id, tier, seats, stripe_customer_id, stripe_subscription_id, subscription_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'team', ?, ?, ?, 'active', ?, ?)
+      `).bind(teamId, teamName, slug, userId, seats, customerId, subscriptionId, now, now),
+
+      c.env.DB.prepare(`
+        INSERT INTO team_members (team_id, user_id, role, joined_at)
+        VALUES (?, ?, 'owner', ?)
+      `).bind(teamId, userId, now),
+
+      c.env.DB.prepare(`
+        INSERT INTO team_keys (id, team_id, encryption_key, key_version, created_at)
+        VALUES (?, ?, ?, 1, ?)
+      `).bind(keyId, teamId, encryptionKey, now),
+    ]);
+
+    console.log('[Stripe Webhook] Created team:', teamId, 'with', seats, 'seats');
+  }
+
+  if (event.type === 'customer.subscription.updated') {
+    const subscription = event.data.object as {
+      id: string;
+      items: { data: Array<{ quantity: number }> };
+      status: string;
+    };
+
+    const seats = subscription.items?.data?.[0]?.quantity || 1;
+    const status = subscription.status;
+
+    await c.env.DB.prepare(`
+      UPDATE teams SET seats = ?, subscription_status = ?, updated_at = ? WHERE stripe_subscription_id = ?
+    `).bind(seats, status, new Date().toISOString(), subscription.id).run();
+
+    console.log('[Stripe Webhook] Updated subscription:', subscription.id, 'seats:', seats, 'status:', status);
+  }
+
+  if (event.type === 'customer.subscription.deleted') {
+    const subscription = event.data.object;
+
+    await c.env.DB.prepare(`
+      UPDATE teams SET subscription_status = 'canceled', updated_at = ? WHERE stripe_subscription_id = ?
+    `).bind(new Date().toISOString(), subscription.id).run();
+
+    console.log('[Stripe Webhook] Canceled subscription:', subscription.id);
+  }
+
+  return c.json({ received: true });
+});
+
+// Get Stripe Customer Portal URL (for managing subscription)
+app.post('/checkout/portal', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // Get user's team with Stripe customer ID
+  const team = await c.env.DB.prepare(`
+    SELECT t.stripe_customer_id
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ? AND t.stripe_customer_id IS NOT NULL
+    LIMIT 1
+  `).bind(user.id).first<{ stripe_customer_id: string }>();
+
+  if (!team?.stripe_customer_id) {
+    return c.json({ error: 'No subscription found' }, 404);
+  }
+
+  const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+
+  const portalResponse = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'customer': team.stripe_customer_id,
+      'return_url': `${baseUrl}/dashboard`,
+    }),
+  });
+
+  if (!portalResponse.ok) {
+    const error = await portalResponse.text();
+    console.error('[Stripe] Portal session error:', error);
+    return c.json({ error: 'Failed to create portal session' }, 500);
+  }
+
+  const session = await portalResponse.json() as { url: string };
+
+  return c.json({ portalUrl: session.url });
 });
 
 export default app;

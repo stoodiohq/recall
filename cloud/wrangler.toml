@@ -6,6 +6,7 @@ workers_dev = true
 
 [vars]
 ENVIRONMENT = "production"
+STRIPE_PRICE_ID = "price_1SmSHwGXjDBivCg0OI443n2Y"
 
 # D1 Database
 [[d1_databases]]
