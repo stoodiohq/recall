@@ -477,8 +477,108 @@ async function autoImportNewSessions(): Promise<{ imported: number; skipped: num
   // Log activity
   logMemoryAccess(config.token, 'large', 'write');
 
+  // ALWAYS generate summaries when large.md is updated
+  generateSummariesFromLarge(largeContent, teamKey.key);
+
   console.error(`[Recall] Auto-import: Imported ${newSessions.length} sessions`);
   return { imported: newSessions.length, skipped: sessionFiles.length - newSessions.length };
+}
+
+/**
+ * Generate medium.md and small.md summaries from large.md content
+ * Called automatically whenever large.md is written
+ */
+function generateSummariesFromLarge(largeContent: string, encryptionKey: string): void {
+  const repoName = getCurrentRepoName() || path.basename(process.cwd());
+  const dateStr = new Date().toISOString().split('T')[0];
+
+  // Extract sessions from large.md
+  const sessionMatches = largeContent.match(/## Session: [\s\S]*?(?=## Session:|$)/g) || [];
+  const recentSessions = sessionMatches.slice(-5); // Last 5 for medium
+  const lastSession = sessionMatches.slice(-1)[0]; // Last 1 for small
+
+  // Build medium.md from recent sessions
+  let mediumContent = `# ${repoName} - Session History\n\n`;
+  mediumContent += `_Last synced: ${dateStr}_\n\n`;
+  mediumContent += `_${sessionMatches.length} total sessions_\n\n`;
+
+  for (const session of recentSessions) {
+    const headerMatch = session.match(/## Session: ([^\n]+)/);
+    const userMessages = session.match(/\*\*User:\*\*[\s\S]*?(?=\*\*Assistant:\*\*|\*\*User:\*\*|$)/g) || [];
+
+    if (headerMatch) {
+      mediumContent += `### ${headerMatch[1]}\n\n`;
+      const summaryMessages = userMessages.slice(0, 3).map(m => {
+        const text = m.replace(/\*\*User:\*\*\s*/, '').trim();
+        return text.length > 200 ? text.substring(0, 200) + '...' : text;
+      });
+      if (summaryMessages.length > 0) {
+        mediumContent += summaryMessages.map(m => `- ${m}`).join('\n') + '\n\n';
+      }
+    }
+  }
+
+  writeRecallFile('medium.md', mediumContent, encryptionKey);
+  console.error('[Recall] Updated medium.md');
+
+  // Build small.md from most recent session
+  let smallContent = `# ${repoName} - Quick Context\n\n`;
+  smallContent += `_Last synced: ${dateStr}_\n\n`;
+
+  if (lastSession) {
+    const headerMatch = lastSession.match(/## Session: ([^\n]+)/);
+    const userMessages = lastSession.match(/\*\*User:\*\*[\s\S]*?(?=\*\*Assistant:\*\*|\*\*User:\*\*|$)/g) || [];
+
+    smallContent += `## Last Session: ${headerMatch?.[1] || 'Unknown'}\n\n`;
+
+    if (userMessages.length > 0) {
+      smallContent += `**Topics discussed:**\n`;
+      const topics = userMessages.slice(0, 5).map(m => {
+        const text = m.replace(/\*\*User:\*\*\s*/, '').trim();
+        return text.length > 100 ? text.substring(0, 100) + '...' : text;
+      });
+      smallContent += topics.map(t => `- ${t}`).join('\n') + '\n';
+    }
+  } else {
+    smallContent += `No sessions recorded yet.\n`;
+  }
+
+  writeRecallFile('small.md', smallContent, encryptionKey);
+  console.error('[Recall] Updated small.md');
+}
+
+/**
+ * Sync memory files - CLI command for git hooks
+ * Imports new sessions and generates/updates summaries
+ */
+async function syncMemory(): Promise<void> {
+  console.log('🔄 Syncing Recall memory...\n');
+
+  const config = loadConfig();
+  if (!config?.token) {
+    console.error('❌ Not authenticated. Run: npx recall-mcp-server install <token>');
+    process.exit(1);
+  }
+
+  const teamKey = await getTeamKey(config.token);
+  if (!teamKey?.hasAccess) {
+    console.error('❌ No team access. Check your subscription at https://recall.team/dashboard');
+    process.exit(1);
+  }
+
+  // Check if .recall/ exists
+  const recallDir = getRecallDir();
+  if (!fs.existsSync(recallDir)) {
+    console.error('❌ No .recall/ directory found. Run recall_init first.');
+    process.exit(1);
+  }
+
+  // Import new sessions - this also generates summaries automatically
+  console.log('📥 Importing new sessions...');
+  const importResult = await autoImportNewSessions();
+  console.log(`   Imported: ${importResult.imported}, Already synced: ${importResult.skipped}`);
+
+  console.log('\n✅ Sync complete! (large.md, medium.md, small.md all updated)');
 }
 
 /**
@@ -1234,11 +1334,14 @@ server.registerTool('recall_import_transcript', {
     // Write encrypted large.md
     writeRecallFile('large.md', largeContent, teamKey.key);
 
+    // ALWAYS generate summaries when large.md is updated
+    generateSummariesFromLarge(largeContent, teamKey.key);
+
     // Log access
     logMemoryAccess(config.token, 'large', 'write');
 
     return {
-      content: [{ type: 'text', text: `Imported ${messageCount} messages from session transcript.\n\nSaved to .recall/large.md (encrypted).` }],
+      content: [{ type: 'text', text: `Imported ${messageCount} messages from session transcript.\n\nSaved to .recall/large.md, medium.md, small.md (encrypted).` }],
     };
   } catch (error) {
     return {
@@ -1325,15 +1428,16 @@ server.registerTool('recall_import_all_sessions', {
     : getRecallDir();
 
   ensureRecallDir();
-  const largePath = path.join(recallDir, 'large.md');
-  const encrypted = encrypt(largeContent, teamKey.key);
-  fs.writeFileSync(largePath, encrypted);
+  writeRecallFile('large.md', largeContent, teamKey.key);
+
+  // ALWAYS generate summaries when large.md is updated
+  generateSummariesFromLarge(largeContent, teamKey.key);
 
   // Log access
   logMemoryAccess(config.token, 'large', 'write');
 
   return {
-    content: [{ type: 'text', text: `Imported ${sessionFiles.length} sessions (${totalMessages} total messages) to large.md.\n\nSessions imported:\n${sortedFiles.map(f => `  - ${path.basename(f)}`).join('\n')}\n\nSaved to: ${recallDir}/large.md (encrypted)` }],
+    content: [{ type: 'text', text: `Imported ${sessionFiles.length} sessions (${totalMessages} total messages).\n\nSessions imported:\n${sortedFiles.map(f => `  - ${path.basename(f)}`).join('\n')}\n\nSaved to: ${recallDir}/ (large.md, medium.md, small.md - all encrypted)` }],
   };
 });
 
@@ -2022,12 +2126,20 @@ async function handleCli(): Promise<boolean> {
     return true; // Handled CLI command, don't start server
   }
 
+  if (args[0] === 'sync') {
+    // Sync command - import sessions and update memory files
+    // Can be called from git hooks or manually
+    await syncMemory();
+    return true;
+  }
+
   if (args[0] === '--help' || args[0] === '-h') {
     console.log(`
 Recall MCP Server - Team memory for AI coding tools
 
 Usage:
   npx recall-mcp-server install <token> [--tool <tool>]   Install and configure Recall
+  npx recall-mcp-server sync                              Sync sessions to memory (for git hooks)
   npx recall-mcp-server                                   Start MCP server (called by AI tools)
 
 Options:
@@ -2039,6 +2151,7 @@ Examples:
   npx recall-mcp-server install abc123 --tool claude      Install for Claude Code
   npx recall-mcp-server install abc123 --tool cursor      Install for Cursor
   npx recall-mcp-server install abc123 --tool windsurf    Install for Windsurf
+  npx recall-mcp-server sync                              Sync after git push (use in hooks)
 
 Get your token from https://recall.team/dashboard
 `);
