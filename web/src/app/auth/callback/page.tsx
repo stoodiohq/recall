@@ -7,11 +7,11 @@ import { useAuth } from '@/lib/AuthContext';
 function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login } = useAuth();
+  const { loginWithCode } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = searchParams.get('token');
+    const code = searchParams.get('code');
     const errorParam = searchParams.get('error');
 
     if (errorParam) {
@@ -19,16 +19,20 @@ function AuthCallbackContent() {
       return;
     }
 
-    if (token) {
-      login(token).then(() => {
-        router.push('/dashboard');
+    if (code) {
+      loginWithCode(code).then((success) => {
+        if (success) {
+          router.push('/dashboard');
+        } else {
+          setError('Failed to authenticate');
+        }
       }).catch(() => {
         setError('Failed to authenticate');
       });
     } else {
-      setError('No token received');
+      setError('No authorization code received');
     }
-  }, [searchParams, login, router]);
+  }, [searchParams, loginWithCode, router]);
 
   if (error) {
     return (

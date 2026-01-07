@@ -271,6 +271,69 @@ async function hashToken(token: string): Promise<string> {
 }
 
 // ============================================================
+// Stripe Webhook Signature Verification
+// ============================================================
+
+async function verifyStripeSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  // Parse the signature header (format: t=timestamp,v1=signature)
+  const parts = signature.split(',');
+  const timestampPart = parts.find(p => p.startsWith('t='));
+  const signaturePart = parts.find(p => p.startsWith('v1='));
+
+  if (!timestampPart || !signaturePart) {
+    return false;
+  }
+
+  const timestamp = timestampPart.slice(2);
+  const expectedSig = signaturePart.slice(3);
+
+  // Verify timestamp is within 5 minutes to prevent replay attacks
+  const timestampAge = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
+  if (timestampAge > 300) {
+    console.error('[Stripe] Webhook timestamp too old:', timestampAge, 'seconds');
+    return false;
+  }
+
+  // Compute expected signature
+  const signedPayload = `${timestamp}.${payload}`;
+  const encoder = new TextEncoder();
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signatureBuffer = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(signedPayload)
+  );
+
+  const computedSig = Array.from(new Uint8Array(signatureBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  // Constant-time comparison to prevent timing attacks
+  if (computedSig.length !== expectedSig.length) {
+    return false;
+  }
+
+  let result = 0;
+  for (let i = 0; i < computedSig.length; i++) {
+    result |= computedSig.charCodeAt(i) ^ expectedSig.charCodeAt(i);
+  }
+
+  return result === 0;
+}
+
+// ============================================================
 // GitHub OAuth endpoints
 // ============================================================
 
@@ -290,12 +353,30 @@ app.get('/auth/github', (c) => {
   authUrl.searchParams.set('scope', scope);
   authUrl.searchParams.set('state', state);
 
-  return c.redirect(authUrl.toString());
+  // Store state in a secure, HTTP-only cookie for CSRF protection
+  const isProduction = c.env.ENVIRONMENT === 'production';
+  const cookieOptions = [
+    `oauth_state=${state}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=600', // 10 minutes
+    isProduction ? 'Secure' : '',
+  ].filter(Boolean).join('; ');
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      'Location': authUrl.toString(),
+      'Set-Cookie': cookieOptions,
+    },
+  });
 });
 
 app.get('/auth/github/callback', async (c) => {
   const code = c.req.query('code');
   const error = c.req.query('error');
+  const stateParam = c.req.query('state');
 
   if (error) {
     return c.json({ error: `GitHub OAuth error: ${error}` }, 400);
@@ -303,6 +384,18 @@ app.get('/auth/github/callback', async (c) => {
 
   if (!code) {
     return c.json({ error: 'Missing authorization code' }, 400);
+  }
+
+  // Validate OAuth state to prevent CSRF attacks
+  const cookies = c.req.header('Cookie') || '';
+  const stateCookie = cookies.split(';')
+    .map(c => c.trim())
+    .find(c => c.startsWith('oauth_state='));
+  const storedState = stateCookie?.split('=')[1];
+
+  if (!stateParam || !storedState || stateParam !== storedState) {
+    console.error('[OAuth] State mismatch - possible CSRF attack', { stateParam, storedState: storedState ? '[present]' : '[missing]' });
+    return c.json({ error: 'Invalid state parameter' }, 400);
   }
 
   try {
@@ -449,20 +542,78 @@ app.get('/auth/github/callback', async (c) => {
       `);
     }
 
-    // Web auth: redirect with token in URL (for SPA to handle)
+    // Web auth: redirect with short-lived auth code (not the JWT directly)
+    // This prevents token exposure in URLs, logs, and referrer headers
+    const authCode = crypto.randomUUID();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+    // Clean up expired codes
+    await c.env.DB.prepare('DELETE FROM auth_codes WHERE expires_at < ?').bind(Date.now()).run();
+
+    // Store the auth code -> JWT mapping in D1
+    await c.env.DB.prepare(
+      'INSERT INTO auth_codes (code, jwt, expires_at) VALUES (?, ?, ?)'
+    ).bind(authCode, sessionToken, expiresAt).run();
+
     const redirectUrl = new URL(c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003');
 
     // Check if user needs onboarding
     const needsOnboarding = !user.onboarding_completed;
     redirectUrl.pathname = needsOnboarding ? '/onboarding' : '/dashboard';
-    redirectUrl.searchParams.set('token', sessionToken);
+    redirectUrl.searchParams.set('code', authCode);
 
-    return c.redirect(redirectUrl.toString());
+    // Clear the OAuth state cookie
+    const isProduction = c.env.ENVIRONMENT === 'production';
+    const clearCookieOptions = [
+      'oauth_state=',
+      'Path=/',
+      'HttpOnly',
+      'Max-Age=0',
+      isProduction ? 'Secure' : '',
+    ].filter(Boolean).join('; ');
+
+    return new Response(null, {
+      status: 302,
+      headers: {
+        'Location': redirectUrl.toString(),
+        'Set-Cookie': clearCookieOptions,
+      },
+    });
 
   } catch (err) {
     console.error('OAuth error:', err);
     return c.json({ error: 'Authentication failed' }, 500);
   }
+});
+
+// Exchange auth code for JWT token (POST to avoid token in URL/logs)
+app.post('/auth/exchange', async (c) => {
+  const body = await c.req.json() as { code?: string };
+  const { code } = body;
+
+  if (!code) {
+    return c.json({ error: 'Missing authorization code' }, 400);
+  }
+
+  // Look up auth code in D1 (not in-memory, since Workers are stateless)
+  const stored = await c.env.DB.prepare(
+    'SELECT jwt, expires_at FROM auth_codes WHERE code = ?'
+  ).bind(code).first<{ jwt: string; expires_at: number }>();
+
+  if (!stored) {
+    return c.json({ error: 'Invalid or expired authorization code' }, 400);
+  }
+
+  if (stored.expires_at < Date.now()) {
+    // Delete expired code
+    await c.env.DB.prepare('DELETE FROM auth_codes WHERE code = ?').bind(code).run();
+    return c.json({ error: 'Authorization code expired' }, 400);
+  }
+
+  // Delete the code after use (one-time use)
+  await c.env.DB.prepare('DELETE FROM auth_codes WHERE code = ?').bind(code).run();
+
+  return c.json({ token: stored.jwt });
 });
 
 // ============================================================
@@ -614,12 +765,76 @@ app.post('/onboarding/complete', async (c) => {
 
   const now = new Date().toISOString();
 
-  // Update user profile
+  // Update user profile (always do this first)
   await c.env.DB.prepare(`
-    UPDATE users SET role = ?, company = ?, team_size = ?, onboarding_completed = 1, updated_at = ?
+    UPDATE users SET role = ?, company = ?, team_size = ?, updated_at = ?
     WHERE id = ?
   `).bind(body.role, body.company, body.teamSize, now, user.id).run();
 
+  // For paid plans (team/enterprise), redirect to Stripe checkout
+  if (body.plan === 'team' || body.plan === 'enterprise') {
+    const sessionId = generateId();
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+
+    // Save onboarding data for after checkout completes
+    await c.env.DB.prepare(`
+      INSERT INTO onboarding_sessions (id, user_id, role, company, team_size, team_name, plan, seats, selected_repos, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      sessionId,
+      user.id,
+      body.role,
+      body.company,
+      body.teamSize,
+      body.teamName,
+      body.plan,
+      body.seats || (body.plan === 'team' ? 10 : 50),
+      JSON.stringify(body.selectedRepos || []),
+      expiresAt
+    ).run();
+
+    // Get base URL for redirects
+    const origin = c.req.header('origin') || 'https://recall.team';
+    const baseUrl = origin.includes('localhost') ? origin : 'https://recall.team';
+
+    // Create Stripe checkout session
+    const stripeResponse = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+      },
+      body: new URLSearchParams({
+        'mode': 'subscription',
+        'success_url': `${baseUrl}/onboarding/success?session_id={CHECKOUT_SESSION_ID}`,
+        'cancel_url': `${baseUrl}/onboarding?canceled=true`,
+        'customer_email': user.email,
+        'line_items[0][price]': c.env.STRIPE_PRICE_ID,
+        'line_items[0][quantity]': String(body.seats || 1),
+        'subscription_data[metadata][userId]': user.id,
+        'subscription_data[metadata][onboardingSessionId]': sessionId,
+        'subscription_data[metadata][teamName]': body.teamName,
+        'subscription_data[metadata][seats]': String(body.seats || 1),
+      }),
+    });
+
+    if (!stripeResponse.ok) {
+      const error = await stripeResponse.text();
+      console.error('[Stripe] Checkout session error:', error);
+      return c.json({ error: 'Failed to create checkout session' }, 500);
+    }
+
+    const checkoutSession = await stripeResponse.json() as { id: string; url: string };
+
+    return c.json({
+      success: true,
+      requiresPayment: true,
+      checkoutUrl: checkoutSession.url,
+      checkoutSessionId: checkoutSession.id,
+    });
+  }
+
+  // For free plan, create team directly
   // Check if user already has a team
   const existingTeam = await c.env.DB.prepare(`
     SELECT t.* FROM teams t
@@ -651,9 +866,6 @@ app.post('/onboarding/complete', async (c) => {
       slug = `${baseSlug}-${attempt}`;
     }
 
-    // Determine seats based on plan
-    const seats = body.seats || (body.plan === 'team' ? 10 : 50);
-
     // Generate team encryption key
     const encryptionKey = await generateEncryptionKey();
 
@@ -661,8 +873,8 @@ app.post('/onboarding/complete', async (c) => {
     await c.env.DB.batch([
       c.env.DB.prepare(`
         INSERT INTO teams (id, name, slug, owner_id, tier, seats, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(teamId, body.teamName, slug, user.id, body.plan, seats, now, now),
+        VALUES (?, ?, ?, ?, 'free', 1, ?, ?)
+      `).bind(teamId, body.teamName, slug, user.id, now, now),
 
       c.env.DB.prepare(`
         INSERT INTO team_members (team_id, user_id, role, joined_at)
@@ -680,11 +892,17 @@ app.post('/onboarding/complete', async (c) => {
       name: body.teamName,
       slug,
       owner_id: user.id,
-      tier: body.plan,
-      seats,
+      tier: 'free',
+      seats: 1,
       created_at: now,
     };
   }
+
+  // Mark onboarding as completed for free plan
+  await c.env.DB.prepare(`
+    UPDATE users SET onboarding_completed = 1, updated_at = ?
+    WHERE id = ?
+  `).bind(now, user.id).run();
 
   // Enable selected repos for tracking
   const enabledRepos: { id: string; fullName: string }[] = [];
@@ -719,6 +937,7 @@ app.post('/onboarding/complete', async (c) => {
 
   return c.json({
     success: true,
+    requiresPayment: false,
     user: {
       id: user.id,
       email: user.email,
@@ -2762,10 +2981,22 @@ app.post('/webhooks/stripe', async (c) => {
   const payload = await c.req.text();
   const signature = c.req.header('stripe-signature');
 
-  // In production, verify the webhook signature
-  // For now, we'll process the event directly
-  // TODO: Add signature verification with STRIPE_WEBHOOK_SECRET
-  
+  // Verify webhook signature in production
+  if (c.env.STRIPE_WEBHOOK_SECRET) {
+    if (!signature) {
+      console.error('[Stripe Webhook] Missing signature header');
+      return c.json({ error: 'Missing signature' }, 401);
+    }
+
+    const isValid = await verifyStripeSignature(payload, signature, c.env.STRIPE_WEBHOOK_SECRET);
+    if (!isValid) {
+      console.error('[Stripe Webhook] Invalid signature');
+      return c.json({ error: 'Invalid signature' }, 401);
+    }
+  } else {
+    console.warn('[Stripe Webhook] STRIPE_WEBHOOK_SECRET not configured - skipping signature verification');
+  }
+
   let event: {
     type: string;
     data: {
@@ -2790,7 +3021,7 @@ app.post('/webhooks/stripe', async (c) => {
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    
+
     // Get subscription details to access metadata
     const subResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${session.subscription}`, {
       headers: {
@@ -2812,6 +3043,7 @@ app.post('/webhooks/stripe', async (c) => {
 
     const teamName = subscription.metadata.teamName;
     const userId = subscription.metadata.userId;
+    const onboardingSessionId = subscription.metadata.onboardingSessionId;
     const seats = parseInt(subscription.metadata.seats || '1', 10);
     const customerId = subscription.customer;
     const subscriptionId = subscription.id;
@@ -2829,6 +3061,27 @@ app.post('/webhooks/stripe', async (c) => {
     if (existingTeam) {
       console.log('[Stripe Webhook] Team already exists for subscription:', subscriptionId);
       return c.json({ received: true });
+    }
+
+    // Look up onboarding session for selected repos
+    let selectedRepos: SelectedRepo[] = [];
+    let plan = 'team';
+    if (onboardingSessionId) {
+      const onboardingSession = await c.env.DB.prepare(`
+        SELECT plan, selected_repos FROM onboarding_sessions WHERE id = ? AND user_id = ?
+      `).bind(onboardingSessionId, userId).first<{ plan: string; selected_repos: string }>();
+
+      if (onboardingSession) {
+        plan = onboardingSession.plan || 'team';
+        try {
+          selectedRepos = JSON.parse(onboardingSession.selected_repos || '[]');
+        } catch (e) {
+          console.error('[Stripe Webhook] Failed to parse selected_repos:', e);
+        }
+
+        // Clean up the onboarding session
+        await c.env.DB.prepare('DELETE FROM onboarding_sessions WHERE id = ?').bind(onboardingSessionId).run();
+      }
     }
 
     // Generate unique slug
@@ -2854,8 +3107,8 @@ app.post('/webhooks/stripe', async (c) => {
     await c.env.DB.batch([
       c.env.DB.prepare(`
         INSERT INTO teams (id, name, slug, owner_id, tier, seats, stripe_customer_id, stripe_subscription_id, subscription_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'team', ?, ?, ?, 'active', ?, ?)
-      `).bind(teamId, teamName, slug, userId, seats, customerId, subscriptionId, now, now),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      `).bind(teamId, teamName, slug, userId, plan, seats, customerId, subscriptionId, now, now),
 
       c.env.DB.prepare(`
         INSERT INTO team_members (team_id, user_id, role, joined_at)
@@ -2868,7 +3121,36 @@ app.post('/webhooks/stripe', async (c) => {
       `).bind(keyId, teamId, encryptionKey, now),
     ]);
 
-    console.log('[Stripe Webhook] Created team:', teamId, 'with', seats, 'seats');
+    // Enable selected repos
+    for (const repo of selectedRepos) {
+      const repoId = generateId();
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO repos (id, team_id, github_repo_id, name, full_name, private, description, language, enabled, enabled_by, enabled_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        `).bind(
+          repoId,
+          teamId,
+          repo.id,
+          repo.name,
+          repo.fullName,
+          repo.private ? 1 : 0,
+          repo.description || null,
+          repo.language || null,
+          userId,
+          now
+        ).run();
+      } catch (err) {
+        console.error('[Stripe Webhook] Failed to insert repo:', repo.fullName, err);
+      }
+    }
+
+    // Mark user's onboarding as complete
+    await c.env.DB.prepare(`
+      UPDATE users SET onboarding_completed = 1, updated_at = ? WHERE id = ?
+    `).bind(now, userId).run();
+
+    console.log('[Stripe Webhook] Created team:', teamId, 'with', seats, 'seats and', selectedRepos.length, 'repos');
   }
 
   if (event.type === 'customer.subscription.updated') {

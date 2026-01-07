@@ -163,9 +163,9 @@ export default function ReposPage() {
       // Find repos to remove (currently enabled but not selected)
       const toRemove = enabledRepos.filter(r => !selectedRepos.has(r.githubRepoId));
 
-      // Add new repos
+      // Add new repos and initialize them
       for (const repo of toAdd) {
-        await fetch(`${API_URL}/repos`, {
+        const addResponse = await fetch(`${API_URL}/repos`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -180,6 +180,17 @@ export default function ReposPage() {
             language: repo.language,
           }),
         });
+
+        // Initialize the repo after adding
+        if (addResponse.ok) {
+          const addedRepo = await addResponse.json();
+          if (addedRepo.id) {
+            await fetch(`${API_URL}/repos/${addedRepo.id}/initialize`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+          }
+        }
       }
 
       // Remove deselected repos

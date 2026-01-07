@@ -521,22 +521,25 @@ function IntegrateStep({
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading, logout, login, refresh } = useAuth();
+  const { user, loading, logout, loginWithCode, refresh } = useAuth();
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [licenseLoading, setLicenseLoading] = useState(true);
   const [repos, setRepos] = useState<EnabledRepo[]>([]);
   const [reposLoading, setReposLoading] = useState(true);
   const [showAccountPanel, setShowAccountPanel] = useState(false);
 
-  // Handle token from URL (after OAuth redirect for returning users)
+  // Handle auth code from URL (after OAuth redirect for returning users)
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      login(token).then(() => {
+    const code = searchParams.get('code');
+    if (code) {
+      loginWithCode(code).then((success) => {
         window.history.replaceState({}, '', '/dashboard');
+        if (!success) {
+          console.error('Failed to exchange auth code');
+        }
       });
     }
-  }, [searchParams, login]);
+  }, [searchParams, loginWithCode]);
 
   // Handle refresh param (after returning from repos page or onboarding)
   useEffect(() => {
@@ -548,7 +551,7 @@ function DashboardContent() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!loading && !user && !searchParams.get('token')) {
+    if (!loading && !user && !searchParams.get('code')) {
       router.push('/');
     }
   }, [loading, user, router, searchParams]);
@@ -1085,8 +1088,8 @@ function DashboardContent() {
                       )}
                     </div>
 
-                    {/* Step Content - Only show for current step or completed steps that might need action */}
-                    {(isCurrentStep || (isPastStep && step.id === 'repos')) && (
+                    {/* Step Content - Show for current step, past steps that need action, and integrate step (always visible) */}
+                    {(isCurrentStep || (isPastStep && step.id === 'repos') || step.id === 'integrate') && (
                       <div className="px-4 pb-4 pt-0">
                         <div className="ml-14">
                           {step.id === 'subscription' && (

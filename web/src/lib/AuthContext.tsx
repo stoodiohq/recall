@@ -1,12 +1,13 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, getToken, setToken, clearToken, fetchUser } from './auth';
+import { User, getToken, setToken, clearToken, fetchUser, exchangeAuthCode } from './auth';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (token: string) => Promise<void>;
+  loginWithCode: (code: string) => Promise<boolean>;
   logout: () => void;
   refresh: () => Promise<void>;
 }
@@ -35,6 +36,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(userData);
   };
 
+  const loginWithCode = async (code: string): Promise<boolean> => {
+    const token = await exchangeAuthCode(code);
+    if (!token) {
+      return false;
+    }
+    setToken(token);
+    const userData = await fetchUser();
+    setUser(userData);
+    return true;
+  };
+
   const logout = () => {
     clearToken();
     setUser(null);
@@ -50,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithCode, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

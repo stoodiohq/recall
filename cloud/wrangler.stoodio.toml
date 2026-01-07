@@ -7,6 +7,7 @@ account_id = "d3e569d2d49281d2d3ebe1eb5069dea4"
 
 [vars]
 ENVIRONMENT = "production"
+STRIPE_PRICE_ID = "price_1Smo3zGXjDBivCg0x35t9VDd"
 
 # D1 Database - Stoodio account
 [[d1_databases]]

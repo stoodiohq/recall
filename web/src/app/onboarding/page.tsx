@@ -45,7 +45,7 @@ const teamSizes = [
 function OnboardingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading: authLoading, login, refresh } = useAuth();
+  const { user, loading: authLoading, loginWithCode, refresh } = useAuth();
 
   const [step, setStep] = useState<Step>('profile');
   const [saving, setSaving] = useState(false);
@@ -70,20 +70,23 @@ function OnboardingContent() {
   const [selectedRepos, setSelectedRepos] = useState<Set<number>>(new Set());
   const [repoSearch, setRepoSearch] = useState('');
 
-  // Handle token from URL (after OAuth redirect)
+  // Handle auth code from URL (after OAuth redirect)
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      login(token).then(() => {
-        // Remove token from URL without triggering navigation
+    const code = searchParams.get('code');
+    if (code) {
+      loginWithCode(code).then((success) => {
+        // Remove code from URL without triggering navigation
         window.history.replaceState({}, '', '/onboarding');
+        if (!success) {
+          console.error('Failed to exchange auth code');
+        }
       });
     }
-  }, [searchParams, login]);
+  }, [searchParams, loginWithCode]);
 
   // Check if user needs onboarding
   useEffect(() => {
-    if (!authLoading && !user && !searchParams.get('token')) {
+    if (!authLoading && !user && !searchParams.get('code')) {
       router.push('/');
       return;
     }
@@ -183,7 +186,49 @@ function OnboardingContent() {
     }
   };
 
-  const handlePlanSubmit = () => {
+  const handlePlanSubmit = async () => {
+    // For paid plans, go directly to Stripe checkout
+    if (selectedPlan === 'team' || selectedPlan === 'enterprise') {
+      setSaving(true);
+      const token = getToken();
+
+      try {
+        const response = await fetch(`${API_URL}/onboarding/complete`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            role,
+            company,
+            teamSize,
+            teamName: company,
+            plan: selectedPlan,
+            seats,
+            selectedRepos: [], // Repos will be selected after payment
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to create checkout session');
+        }
+
+        const data = await response.json();
+
+        if (data.requiresPayment && data.checkoutUrl) {
+          console.log('[Onboarding] Redirecting to Stripe checkout...');
+          window.location.href = data.checkoutUrl;
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to create checkout session:', error);
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    // For free plan, continue to repo selection
     setStep('repos');
   };
 
@@ -243,6 +288,15 @@ function OnboardingContent() {
       }
 
       const data = await response.json();
+
+      // For paid plans, redirect to Stripe checkout
+      if (data.requiresPayment && data.checkoutUrl) {
+        console.log('[Onboarding] Redirecting to Stripe checkout...');
+        window.location.href = data.checkoutUrl;
+        return;
+      }
+
+      // For free plan, initialize repos and go to dashboard
       const enabledRepos = data.enabledRepos || [];
 
       // Auto-initialize each repo

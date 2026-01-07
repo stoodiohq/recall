@@ -23,7 +23,7 @@ const plans = [
   {
     id: 'team',
     name: 'Team',
-    price: '$12',
+    price: '$10',
     period: '/seat/mo',
     description: 'For dev teams who ship together.',
     features: [
@@ -37,7 +37,7 @@ const plans = [
     cta: 'Start Free Trial',
     highlighted: true,
     badge: 'Most Popular',
-    annual: '$10/seat billed annually',
+    annual: '$8/seat billed annually',
   },
   {
     id: 'enterprise',

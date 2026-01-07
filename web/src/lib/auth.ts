@@ -72,6 +72,33 @@ export function getGitHubAuthUrl(): string {
 }
 
 /**
+ * Exchange an auth code for a JWT token
+ * This is used after OAuth redirect to avoid exposing the JWT in the URL
+ */
+export async function exchangeAuthCode(code: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_URL}/auth/exchange`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ code }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to exchange auth code:', await response.text());
+      return null;
+    }
+
+    const data = await response.json() as { token: string };
+    return data.token;
+  } catch (err) {
+    console.error('Error exchanging auth code:', err);
+    return null;
+  }
+}
+
+/**
  * Fetch current user from API
  */
 export async function fetchUser(): Promise<User | null> {
