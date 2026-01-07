@@ -608,9 +608,16 @@ async function syncMemory(): Promise<void> {
 }
 
 /**
- * Find ALL Claude Code session JSONL files for current project
+ * Find ALL Claude Code session JSONL files for current project and its subdirectories
  * Claude stores sessions in ~/.claude/projects/<path-with-dashes>/
  * e.g., /Users/ray/myproject -> -Users-ray-myproject
+ *
+ * IMPORTANT: Includes sessions from:
+ * - The exact project directory (e.g., -Users-ray-myproject)
+ * - Child directories (e.g., -Users-ray-myproject-src, -Users-ray-myproject-api)
+ *
+ * EXCLUDES sessions from parent directories to avoid importing unrelated projects.
+ * (e.g., sessions from /Users/ray would include ALL projects - we don't want that)
  *
  * Returns array of all session files, sorted by modification time (newest first)
  */
@@ -630,26 +637,26 @@ function findAllSessionFiles(): string[] {
   // /Users/ray/project -> -Users-ray-project
   const projectDirName = cwd.replace(/\//g, '-');
 
-  // Also check parent directories (in case Claude was opened at parent level)
-  const pathsToCheck = [projectDirName];
-  let parentPath = cwd;
-  while (parentPath !== '/' && parentPath !== os.homedir()) {
-    parentPath = path.dirname(parentPath);
-    if (parentPath !== '/') {
-      pathsToCheck.push(parentPath.replace(/\//g, '-'));
-    }
-  }
+  // Find all project directories that match this path or are children of it
+  // Include: -Users-ray-project, -Users-ray-project-src, -Users-ray-project-api
+  // Exclude: -Users-ray (parent), -Users (grandparent)
+  const allProjectDirs = fs.readdirSync(claudeProjectsDir);
+  const matchingDirs = allProjectDirs.filter(dir => {
+    // Include exact match or child directories (dir starts with our path)
+    return dir === projectDirName || dir.startsWith(projectDirName + '-');
+  });
 
-  console.error(`[Recall] Checking project dirs: ${pathsToCheck.join(', ')}`);
+  console.error(`[Recall] Checking project prefix: ${projectDirName}`);
+  console.error(`[Recall] Found ${matchingDirs.length} matching directories`);
 
-  for (const dirName of pathsToCheck) {
+  for (const dirName of matchingDirs) {
     const projectPath = path.join(claudeProjectsDir, dirName);
 
-    if (!fs.existsSync(projectPath)) {
+    if (!fs.statSync(projectPath).isDirectory()) {
       continue;
     }
 
-    console.error(`[Recall] Found project dir: ${projectPath}`);
+    console.error(`[Recall] Scanning: ${dirName}`);
 
     // Find all .jsonl files (excluding agent- files which are subagent logs)
     const files = fs.readdirSync(projectPath);
@@ -665,7 +672,7 @@ function findAllSessionFiles(): string[] {
   // Sort by modification time (newest first)
   sessionFiles.sort((a, b) => b.mtime - a.mtime);
 
-  console.error(`[Recall] Found ${sessionFiles.length} session files`);
+  console.error(`[Recall] Found ${sessionFiles.length} session files total`);
   return sessionFiles.map(f => f.path);
 }
 
@@ -779,7 +786,7 @@ async function generateSummaries(
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.6.1',
+  version: '0.6.3',
 }, {
   capabilities: {
     tools: {},
