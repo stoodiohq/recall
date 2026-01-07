@@ -1666,6 +1666,30 @@ async function encryptContent(text: string, keyBase64: string): Promise<string> 
   return `RECALL_ENCRYPTED:v1:${ivB64}:${cipherB64}`;
 }
 
+// List existing API tokens (metadata only - tokens are hashed and cannot be retrieved)
+app.get('/auth/tokens', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const tokens = await c.env.DB.prepare(`
+    SELECT id, name, created_at, last_used_at
+    FROM api_tokens
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+  `).bind(user.id).all<{ id: string; name: string; created_at: string; last_used_at: string | null }>();
+
+  return c.json({
+    tokens: tokens.results?.map(t => ({
+      id: t.id,
+      name: t.name,
+      createdAt: t.created_at,
+      lastUsedAt: t.last_used_at,
+    })) || [],
+  });
+});
+
 // Generate CLI API token
 app.post('/auth/token', async (c) => {
   const user = await getAuthUser(c);
@@ -1692,6 +1716,27 @@ app.post('/auth/token', async (c) => {
     name: tokenName,
     createdAt: now,
   });
+});
+
+// Delete an API token
+app.delete('/auth/tokens/:tokenId', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const tokenId = c.req.param('tokenId');
+
+  // Verify the token belongs to this user before deleting
+  const result = await c.env.DB.prepare(`
+    DELETE FROM api_tokens WHERE id = ? AND user_id = ?
+  `).bind(tokenId, user.id).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Token not found' }, 404);
+  }
+
+  return c.json({ success: true });
 });
 
 // ============================================================

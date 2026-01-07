@@ -203,7 +203,7 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
           keyVersion: 0,
           teamId: '',
           teamSlug: '',
-          message: 'Token expired. Run recall_auth again.'
+          message: 'Authentication failed. Your token may be invalid, revoked, or not passed correctly. Run recall_auth with a fresh token from https://recall.team/dashboard'
         };
       }
       if (response.status === 403) {
@@ -1667,7 +1667,7 @@ server.registerTool('recall_status', {
 
     if (!response.ok) {
       return {
-        content: [{ type: 'text', text: 'Token expired. Run recall_auth again.' }],
+        content: [{ type: 'text', text: 'Authentication failed. Check your token is valid at https://recall.team/dashboard or run recall_auth with a fresh token.' }],
       };
     }
 

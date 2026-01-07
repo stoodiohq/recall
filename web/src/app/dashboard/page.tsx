@@ -243,36 +243,66 @@ function InitializeStep({
   );
 }
 
+interface ExistingToken {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
 function InstallSection() {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [apiToken, setApiToken] = useState<string | null>(null);
+  const [existingTokens, setExistingTokens] = useState<ExistingToken[]>([]);
+  const [loading, setLoading] = useState(false);
   const [generatingToken, setGeneratingToken] = useState(false);
 
   const handleExpand = async () => {
-    if (!expanded && !apiToken) {
-      setGeneratingToken(true);
+    // On first expand, check for existing tokens
+    if (!expanded && existingTokens.length === 0 && !apiToken && !loading) {
+      setLoading(true);
       try {
         const token = getToken();
-        const response = await fetch(`${API_URL}/auth/token`, {
-          method: 'POST',
+        const response = await fetch(`${API_URL}/auth/tokens`, {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ name: 'MCP Token' }),
         });
         if (response.ok) {
           const data = await response.json();
-          setApiToken(data.token);
+          setExistingTokens(data.tokens || []);
         }
       } catch (err) {
-        console.error('Failed to generate token:', err);
+        console.error('Failed to fetch tokens:', err);
       } finally {
-        setGeneratingToken(false);
+        setLoading(false);
       }
     }
     setExpanded(!expanded);
+  };
+
+  const handleGenerateToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_URL}/auth/token`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'MCP Token' }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setApiToken(data.token);
+      }
+    } catch (err) {
+      console.error('Failed to generate token:', err);
+    } finally {
+      setGeneratingToken(false);
+    }
   };
 
   const installCommand = apiToken ? `npx recall-mcp-server install ${apiToken}` : '';
@@ -314,31 +344,36 @@ function InstallSection() {
       {expanded && (
         <div className="px-5 pb-5 pt-0 border-t border-border-subtle">
           <div className="pt-4 space-y-4">
-            {generatingToken ? (
+            {loading ? (
               <div className="flex items-center justify-center py-4">
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-text-secondary">Generating install command...</span>
+                  <span className="text-text-secondary">Loading...</span>
                 </div>
               </div>
-            ) : (
+            ) : apiToken ? (
+              /* Show the newly generated token */
               <>
-                <p className="text-text-secondary text-sm">
-                  Open your system terminal (Terminal, iTerm, etc.) and run this command:
-                </p>
+                <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                  <svg className="w-4 h-4 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <p className="text-text-secondary text-sm">
+                    <strong>Token generated!</strong> Copy this command - it is only shown once.
+                  </p>
+                </div>
                 <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
                   <div className="flex items-center justify-between p-4">
                     <code className="text-cyan-400 font-mono text-sm break-all flex-1 mr-4">
-                      {installCommand || 'Loading...'}
+                      {installCommand}
                     </code>
                     <button
                       onClick={handleCopy}
-                      disabled={!apiToken}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
                         copied
                           ? 'bg-green-500/20 text-green-400'
                           : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
-                      } disabled:opacity-50`}
+                      }`}
                     >
                       {copied ? (
                         <>
@@ -362,6 +397,59 @@ function InstallSection() {
                   The command auto-detects your AI tool and configures Recall. Restart the tool after running.
                 </p>
               </>
+            ) : existingTokens.length > 0 ? (
+              /* User has existing tokens - show info and generate button */
+              <>
+                <p className="text-text-secondary text-sm">
+                  You have {existingTokens.length} existing API token{existingTokens.length > 1 ? 's' : ''}.
+                  Generate a new token to install Recall on another tool.
+                </p>
+                <button
+                  onClick={handleGenerateToken}
+                  disabled={generatingToken}
+                  className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  {generatingToken ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Generate New Token
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              /* No existing tokens - prompt to generate */
+              <>
+                <p className="text-text-secondary text-sm">
+                  Generate an API token to install Recall on another tool.
+                </p>
+                <button
+                  onClick={handleGenerateToken}
+                  disabled={generatingToken}
+                  className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  {generatingToken ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                      Generate API Token
+                    </>
+                  )}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -379,33 +467,62 @@ function IntegrateStep({
 }) {
   const [copied, setCopied] = useState(false);
   const [apiToken, setApiToken] = useState<string | null>(null);
-  const [generatingToken, setGeneratingToken] = useState(true);
+  const [existingTokens, setExistingTokens] = useState<ExistingToken[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generatingToken, setGeneratingToken] = useState(false);
 
-  // Auto-generate token on mount
+  // Check for existing tokens on mount (NOT auto-generate)
   useEffect(() => {
-    const generateToken = async () => {
+    const checkExistingTokens = async () => {
       try {
         const token = getToken();
-        const response = await fetch(`${API_URL}/auth/token`, {
-          method: 'POST',
+        const response = await fetch(`${API_URL}/auth/tokens`, {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ name: 'MCP Token' }),
         });
         if (response.ok) {
           const data = await response.json();
-          setApiToken(data.token);
+          setExistingTokens(data.tokens || []);
         }
       } catch (err) {
-        console.error('Failed to generate token:', err);
+        console.error('Failed to fetch tokens:', err);
       } finally {
-        setGeneratingToken(false);
+        setLoading(false);
       }
     };
-    generateToken();
+    checkExistingTokens();
   }, []);
+
+  const handleGenerateToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_URL}/auth/token`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'MCP Token' }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setApiToken(data.token);
+        // Add to existing tokens list
+        setExistingTokens(prev => [{
+          id: data.id || 'new',
+          name: data.name,
+          createdAt: data.createdAt,
+          lastUsedAt: null,
+        }, ...prev]);
+      }
+    } catch (err) {
+      console.error('Failed to generate token:', err);
+    } finally {
+      setGeneratingToken(false);
+    }
+  };
 
   const installCommand = apiToken ? `npx recall-mcp-server install ${apiToken}` : '';
 
@@ -438,20 +555,115 @@ function IntegrateStep({
     );
   }
 
-  // Show loading state while token generates
-  if (generatingToken) {
+  // Show loading state while checking for tokens
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-text-secondary">Preparing your install command...</span>
+          <span className="text-text-secondary">Loading...</span>
         </div>
       </div>
     );
   }
 
+  // User has existing tokens but no newly generated one to show
+  if (existingTokens.length > 0 && !apiToken) {
+    const latestToken = existingTokens[0];
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-lg">
+          <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <p className="text-cyan-400 font-medium">API Token Configured</p>
+            <p className="text-text-secondary text-sm">
+              You have {existingTokens.length} token{existingTokens.length > 1 ? 's' : ''} already created.
+              {latestToken.lastUsedAt && ` Last used ${getTimeAgo(latestToken.lastUsedAt)}.`}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+          <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div className="text-sm text-text-secondary">
+            <p>If your AI tool is not connecting, you may need to generate a new token. This will not invalidate existing tokens.</p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleGenerateToken}
+          disabled={generatingToken}
+          className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          {generatingToken ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Generate New Token
+            </>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  // No existing tokens - prompt to generate one
+  if (existingTokens.length === 0 && !apiToken) {
+    return (
+      <div className="space-y-4">
+        <p className="text-text-secondary">
+          Generate an API token to connect your AI tool to Recall.
+        </p>
+        <button
+          onClick={handleGenerateToken}
+          disabled={generatingToken}
+          className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          {generatingToken ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+              Generate API Token
+            </>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  // Show the newly generated token with install command
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-3 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+        <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-green-400 font-medium">Token Generated</p>
+          <p className="text-text-secondary text-sm">Copy the command below to install Recall.</p>
+        </div>
+      </div>
+
       <p className="text-text-secondary">
         Open your system terminal (Terminal, iTerm, etc.) and run this command.
         It will automatically configure your AI tool.
@@ -461,16 +673,15 @@ function IntegrateStep({
       <div className="bg-bg-base border border-border-subtle rounded-lg overflow-hidden">
         <div className="flex items-center justify-between p-4">
           <code className="text-cyan-400 font-mono text-sm break-all flex-1 mr-4">
-            {installCommand || 'Loading...'}
+            {installCommand}
           </code>
           <button
             onClick={handleCopy}
-            disabled={!apiToken}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
               copied
                 ? 'bg-green-500/20 text-green-400'
                 : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
-            } disabled:opacity-50`}
+            }`}
           >
             {copied ? (
               <>
@@ -491,6 +702,15 @@ function IntegrateStep({
         </div>
       </div>
 
+      <div className="flex items-start gap-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+        <svg className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <div className="text-sm text-text-secondary">
+          <p><strong>Important:</strong> This token is only shown once. Copy the install command now.</p>
+        </div>
+      </div>
+
       {/* What it does */}
       <div className="flex items-start gap-3 p-3 bg-bg-elevated border border-border-subtle rounded-lg">
         <svg className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -499,9 +719,9 @@ function IntegrateStep({
         <div className="text-sm text-text-secondary">
           <p>This command automatically:</p>
           <ul className="mt-1 space-y-0.5 text-text-tertiary">
-            <li>• Detects your AI tool (Claude Code, Cursor, or Windsurf)</li>
-            <li>• Adds Recall to your MCP configuration</li>
-            <li>• Verifies the connection</li>
+            <li>Detects your AI tool (Claude Code, Cursor, or Windsurf)</li>
+            <li>Adds Recall to your MCP configuration</li>
+            <li>Verifies the connection</li>
           </ul>
         </div>
       </div>
