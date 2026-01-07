@@ -1,49 +1,51 @@
 # Recall - Team Memory for AI Coding Assistants
 
-Sessions: 12 | Last: 2026-01-06
-Tokens: small ~600 | medium ~900 | large ~1.5k
+Sessions: 14 | Last: 2026-01-06
+Tokens: small ~475 | medium ~1.1k | large ~1.3k
 
 ## Current Status
-- **MCP Server:** LIVE on npm as `recall-mcp-server@0.5.1`
+- **MCP Server:** LIVE on npm as `recall-mcp-server@0.6.0`
 - **Web:** LIVE at https://recall.team (Cloudflare Pages - Stoodio account)
 - **API:** https://api.recall.team (Cloudflare Workers - Stoodio account)
-- **Core Loop:** WORKING - Auto-import on startup, no manual intervention needed
+- **Core Loop:** WORKING - Auto-import on startup, encryption fixed
 
-## Latest Session (2026-01-06) - MAJOR MIGRATION
-**Migrated ALL infrastructure from Ray's personal Cloudflare to Stoodio business account:**
-- D1 Database: `recall-db` (ID: 59978e9e-eceb-4ab4-853e-241e8853fdd3)
-- Worker API: `recall-api` with route api.recall.team
-- Pages: `recall-web` with custom domain recall.team
-- DNS Zone: recall.team (nameservers: mckenzie/miguel)
-- MCP Server: Updated to v0.5.1 with new API URL
+## Latest Session (2026-01-06) - SECURITY AUDIT & FIXES
 
-**Key files changed:**
-- `/cloud/wrangler.stoodio.toml` - Stoodio deployment config
-- `/cloud/src/index.ts` - Updated CORS, OAuth callback, redirects
-- `/web/wrangler.toml` - Pages config with nodejs_compat
-- `/mcp/src/index.ts` - API_URL changed to api.recall.team
+### Completed Today
+1. **Security Audit Phase 1 (CRITICAL) - ALL FIXED:**
+   - C1: Stripe webhook signature verification - FIXED
+   - C2: OAuth state parameter validation (CSRF protection) - FIXED
+   - C3: JWT token in URL replaced with auth code flow - FIXED
 
-**Pending:** GitHub OAuth callback URL needs updating to `https://api.recall.team/auth/github/callback`
+2. **Crypto Key Fix:**
+   - `RangeError: Invalid key length` was blocking all sync
+   - Root cause: `team_ray_001` had placeholder key (18 bytes instead of 32)
+   - Fix: Rotated key via `/keys/rotate` endpoint
+   - Added validation in `encrypt()` with helpful error message
 
-## What's Working
-1. One-command install: `npx recall-mcp-server install <token>`
-2. GitHub OAuth signup/login flow
-3. Dashboard with team management
-4. Team invites with email + role
-5. Auto-context loading via project CLAUDE.md
-6. Auto-import of sessions on MCP startup
+3. **Published v0.6.0 to npm:**
+   - Cleaned debug logging
+   - Key validation added
+   - All users get auto-sync feature
+
+### Pending Security Work (Phase 2-4)
+- H1: GitHub access token stored in plain text
+- H2: No API rate limiting
+- H3-H4: Additional high severity items
+- Medium severity: 5 issues
+- Low severity: 3 issues
 
 ## Architecture
 - Encrypted `.recall/` files in git (useless without key)
+- AES-256-GCM encryption (requires 32-byte key, ~44 chars base64)
 - Team encryption key on Recall servers
 - Valid seat = CLI fetches key, decrypts, loads context
 - Project CLAUDE.md ensures Claude calls Recall on session start
 
 ## Key Files
-- `/mcp/` - MCP server (npm package)
+- `/mcp/src/index.ts` - MCP server with encrypt/decrypt, v0.6.0
+- `/cloud/src/index.ts` - Hono API with security fixes
 - `/web/` - Next.js dashboard (Cloudflare Pages)
-- `/cloud/` - Hono API (Cloudflare Workers)
-- `/cloud/wrangler.stoodio.toml` - Stoodio deployment config
 
 ---
 *medium.md = session history | large.md = full transcripts*

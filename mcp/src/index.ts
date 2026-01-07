@@ -48,6 +48,12 @@ interface ImportedSessionsTracker {
 // Encryption helpers using AES-256-GCM
 function encrypt(text: string, keyBase64: string): string {
   const key = Buffer.from(keyBase64, 'base64');
+
+  // Validate key length - AES-256 requires exactly 32 bytes
+  if (key.length !== 32) {
+    throw new Error(`Invalid encryption key: got ${key.length} bytes, expected 32. Your team key may need to be rotated. Contact support at https://recall.team`);
+  }
+
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
 
@@ -188,6 +194,18 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
     if (!response.ok) {
       const text = await response.text();
       console.error(`[Recall] Team key error: ${text}`);
+
+      // Handle specific error codes with helpful messages
+      if (response.status === 401) {
+        return {
+          hasAccess: false,
+          key: '',
+          keyVersion: 0,
+          teamId: '',
+          teamSlug: '',
+          message: 'Token expired. Run recall_auth again.'
+        };
+      }
       if (response.status === 403) {
         try {
           const data = JSON.parse(text);
@@ -196,7 +214,15 @@ async function getTeamKey(token: string): Promise<TeamKey | null> {
           return { hasAccess: false, key: '', keyVersion: 0, teamId: '', teamSlug: '', message: text };
         }
       }
-      return null;
+      // For other errors, return a generic message rather than null
+      return {
+        hasAccess: false,
+        key: '',
+        keyVersion: 0,
+        teamId: '',
+        teamSlug: '',
+        message: `API error (${response.status}). Check https://recall.team/dashboard`
+      };
     }
 
     const data = await response.json();
@@ -753,7 +779,7 @@ async function generateSummaries(
 // Create the MCP server with resources, prompts, and tools capabilities
 const server = new McpServer({
   name: 'recall',
-  version: '0.4.9',
+  version: '0.6.1',
 }, {
   capabilities: {
     tools: {},
@@ -911,7 +937,7 @@ server.registerResource(
         contents: [{
           uri: 'recall://history',
           mimeType: 'text/markdown',
-          text: '# Recall Access Required\n\nCheck your subscription.',
+          text: `# Recall Access Required\n\n${teamKey?.message || 'Check your subscription.'}`,
         }],
       };
     }
@@ -968,7 +994,7 @@ server.registerResource(
         contents: [{
           uri: 'recall://transcripts',
           mimeType: 'text/markdown',
-          text: '# Recall Access Required',
+          text: `# Recall Access Required\n\n${teamKey?.message || 'Check your subscription.'}`,
         }],
       };
     }
@@ -1149,7 +1175,7 @@ server.registerTool('recall_get_history', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
@@ -1206,7 +1232,7 @@ server.registerTool('recall_get_transcripts', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
@@ -1257,7 +1283,7 @@ server.registerTool('recall_import_transcript', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
@@ -1369,7 +1395,7 @@ server.registerTool('recall_import_all_sessions', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
@@ -1466,7 +1492,7 @@ server.registerTool('recall_save_session', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
@@ -1585,7 +1611,7 @@ server.registerTool('recall_log_decision', {
   const teamKey = await getTeamKey(config.token);
   if (!teamKey?.hasAccess) {
     return {
-      content: [{ type: 'text', text: 'No access. Check your subscription.' }],
+      content: [{ type: 'text', text: teamKey?.message || 'No access. Check your subscription.' }],
       isError: true,
     };
   }
