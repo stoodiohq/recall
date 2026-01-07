@@ -114,7 +114,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', logger());
 app.use('*', cors({
-  origin: ['https://recall.team', 'http://localhost:3000', 'http://localhost:3003'],
+  origin: ['https://recall.team', 'https://recall-web-e2p.pages.dev', 'http://localhost:3000', 'http://localhost:3003'],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -277,7 +277,7 @@ async function hashToken(token: string): Promise<string> {
 app.get('/auth/github', (c) => {
   const clientId = c.env.GITHUB_CLIENT_ID;
   const redirectUri = c.env.ENVIRONMENT === 'production'
-    ? 'https://recall-api.stoodiohq.workers.dev/auth/github/callback'
+    ? 'https://api.recall.team/auth/github/callback'
     : 'http://localhost:8787/auth/github/callback';
 
   const state = crypto.randomUUID();

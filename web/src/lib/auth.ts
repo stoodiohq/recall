@@ -2,7 +2,7 @@
  * Auth utilities for Recall web app
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://recall-api.stoodiohq.workers.dev';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.recall.team';
 
 export interface User {
   id: string;

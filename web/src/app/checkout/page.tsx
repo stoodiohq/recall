@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/AuthContext';
 import { getToken, getGitHubAuthUrl } from '@/lib/auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://recall-api.stoodiohq.workers.dev';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.recall.team';
 
 const PRICE_PER_SEAT = 12;
 const MIN_SEATS = 1;

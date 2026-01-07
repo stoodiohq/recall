@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/AuthContext';
 import { getToken } from '@/lib/auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://recall-api.stoodiohq.workers.dev';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.recall.team';
 
 interface LicenseStatus {
   valid: boolean;
@@ -930,28 +930,28 @@ function DashboardContent() {
               {/* Hotwords */}
               <div className="space-y-4">
                 <p className="text-text-tertiary text-sm uppercase tracking-wider font-medium">Need more context?</p>
-                <p className="text-text-secondary text-sm -mt-2">Say these words when you need deeper memory:</p>
+                <p className="text-text-secondary text-sm -mt-2">Say these phrases when you need deeper team memory:</p>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
                     <div className="flex items-center gap-3 mb-2">
                       <code className="bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full text-sm font-mono font-medium">remember</code>
                     </div>
                     <p className="text-text-secondary text-sm">
-                      Load recent session context. Use when you want your AI to recall what you worked on recently.
+                      Load recent session history. Use when you want your AI to recall recent team decisions and work.
                     </p>
                     <p className="text-text-tertiary text-xs mt-2">
-                      Low token usage - good for daily use
+                      Medium token usage - good for daily use
                     </p>
                   </div>
                   <div className="bg-bg-base border border-border-subtle rounded-lg p-4">
                     <div className="flex items-center gap-3 mb-2">
-                      <code className="bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full text-sm font-mono font-medium">ultra remember</code>
+                      <code className="bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full text-sm font-mono font-medium">ultraremember</code>
                     </div>
                     <p className="text-text-secondary text-sm">
-                      Load full project history. Best for onboarding new team members or complex, long-running features.
+                      Load full session transcripts. Best for onboarding new team members or debugging complex issues.
                     </p>
                     <p className="text-text-tertiary text-xs mt-2">
-                      Higher token usage - worth it for deep context
+                      Higher token usage - use for deep historical context
                     </p>
                   </div>
                 </div>

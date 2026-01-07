@@ -18,7 +18,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 
-const API_URL = 'https://recall-api.stoodiohq.workers.dev';
+const API_URL = 'https://api.recall.team';
 const RECALL_DIR = '.recall';
 const CONFIG_PATH = path.join(os.homedir(), '.recall', 'config.json');
 const IMPORTED_SESSIONS_FILE = 'imported-sessions.json';
