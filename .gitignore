@@ -33,6 +33,9 @@ coverage/
 .tmp/
 tmp/
 
+# Goldfish (separate local memory system, not part of Recall)
+goldfish/
+
 # Database backups with secrets
 cloud/recall-db-backup.sql
 cloud/recall-db-data-only.sql
