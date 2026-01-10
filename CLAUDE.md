@@ -384,18 +384,67 @@ Dashboard → Repos → Enable Repo → Select → Initialize .recall/ → Insta
 **MCP** (`/mcp`)
 - MCP SDK
 - Direct API integration
+- Published to npm as `recall-mcp-server`
 
 **Web** (`/web`)
 - Next.js 14+ (App Router)
 - TypeScript (strict)
 - Tailwind CSS
 - Framer Motion
-- NextAuth (GitHub provider)
+- Deployed to Cloudflare Pages
 
 **API** (`/cloud`)
 - Cloudflare Workers + Hono
 - D1 database (SQLite at edge)
 - GitHub OAuth
+
+---
+
+## Infrastructure (CLOUDFLARE ONLY)
+
+**WE USE CLOUDFLARE FOR EVERYTHING. NO VERCEL. NO AWS. NO OTHER PROVIDERS.**
+
+| Component | Service | Project/Database Name |
+|-----------|---------|----------------------|
+| **API** | Cloudflare Workers | `recall-api` |
+| **Database** | Cloudflare D1 | `recall-db` |
+| **Frontend** | Cloudflare Pages | `recall-web` |
+| **Domain** | Cloudflare DNS | `recall.team` |
+
+### Deployment Commands
+
+**API:**
+```bash
+cd cloud && npx wrangler deploy
+```
+
+**Database Migrations:**
+```bash
+cd cloud && npx wrangler d1 execute recall-db --remote --file=migrations/XXXX.sql
+```
+
+**Frontend:**
+```bash
+cd web && npm run build && npx wrangler pages deploy .next --project-name=recall-web
+```
+
+**MCP (npm):**
+```bash
+cd mcp && npm version patch && npm publish
+```
+
+### Environment Variables / Secrets
+
+**API Secrets (set via `wrangler secret put`):**
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `JWT_SECRET`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `GEMINI_API_KEY`
+
+**Frontend (set in wrangler.toml or Pages dashboard):**
+- `NEXT_PUBLIC_API_URL` = `https://api.recall.team`
 
 ---
 
