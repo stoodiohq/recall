@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/lib/AuthContext';
 import { getToken } from '@/lib/auth';
 
@@ -95,7 +96,7 @@ function SuccessContent() {
         // Final refresh and redirect to repos page
         await refresh();
         setTimeout(() => {
-          router.push('/dashboard/repos?welcome=1');
+          router.push('/app/repos?welcome=1');
         }, 1500);
 
       } catch (error) {
@@ -108,67 +109,132 @@ function SuccessContent() {
     completeSetup();
   }, [searchParams, refresh, router]);
 
+  // Determine if we should show spinner or static icon
+  const showSpinner = status === 'loading' || status === 'initializing';
+  const iconColor = status === 'error' ? 'red' : status === 'success' ? 'green' : 'cyan';
+
   return (
     <div className="min-h-screen bg-bg-base flex items-center justify-center">
       <div className="max-w-md w-full mx-auto p-8 text-center">
-        {status === 'loading' && (
-          <>
-            <div className="w-16 h-16 mx-auto mb-6 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-            <h1 className="text-2xl font-bold text-text-primary mb-2">Payment Successful!</h1>
-            <p className="text-text-secondary">{message}</p>
-          </>
-        )}
+        {/* Icon container - consistent size to prevent layout shift */}
+        <div className="w-16 h-16 mx-auto mb-6 relative">
+          <AnimatePresence mode="wait">
+            {showSpinner ? (
+              <motion.div
+                key="spinner"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.2 }}
+                className="w-16 h-16 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"
+              />
+            ) : status === 'success' ? (
+              <motion.div
+                key="success"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3, type: 'spring', stiffness: 200 }}
+                className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center"
+              >
+                <motion.svg
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 0.4, delay: 0.1 }}
+                  className="w-8 h-8 text-green-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </motion.svg>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="error"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+                className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center"
+              >
+                <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
-        {status === 'initializing' && (
-          <>
-            <div className="w-16 h-16 mx-auto mb-6 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-            <h1 className="text-2xl font-bold text-text-primary mb-2">Setting Up Recall</h1>
-            <p className="text-text-secondary mb-4">{message}</p>
-            {initProgress && (
-              <div className="w-full bg-bg-elevated rounded-full h-2">
-                <div
-                  className="bg-cyan-500 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${(initProgress.current / initProgress.total) * 100}%` }}
+        {/* Title - changes based on status */}
+        <AnimatePresence mode="wait">
+          <motion.h1
+            key={status}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="text-2xl font-bold text-text-primary mb-2"
+          >
+            {status === 'loading' && 'Payment Successful!'}
+            {status === 'initializing' && 'Setting Up Recall'}
+            {status === 'success' && "You're All Set!"}
+            {status === 'error' && 'Something Went Wrong'}
+          </motion.h1>
+        </AnimatePresence>
+
+        {/* Message */}
+        <motion.p
+          key={message}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="text-text-secondary"
+        >
+          {message}
+        </motion.p>
+
+        {/* Progress bar - only during initialization */}
+        <AnimatePresence>
+          {status === 'initializing' && initProgress && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+              className="mt-4"
+            >
+              <div className="w-full bg-bg-elevated rounded-full h-2 overflow-hidden">
+                <motion.div
+                  className="bg-cyan-500 h-2 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(initProgress.current / initProgress.total) * 100}%` }}
+                  transition={{ duration: 0.3 }}
                 />
               </div>
-            )}
-            {initProgress && (
               <p className="text-sm text-text-tertiary mt-2">
                 {initProgress.current} of {initProgress.total} repositories
               </p>
-            )}
-          </>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {status === 'success' && (
-          <>
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-green-500/20 flex items-center justify-center">
-              <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-text-primary mb-2">You&apos;re All Set!</h1>
-            <p className="text-text-secondary">{message}</p>
-          </>
-        )}
-
-        {status === 'error' && (
-          <>
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-red-500/20 flex items-center justify-center">
-              <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-text-primary mb-2">Something Went Wrong</h1>
-            <p className="text-text-secondary mb-6">{message}</p>
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
+        {/* Error button */}
+        <AnimatePresence>
+          {status === 'error' && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.2 }}
+              className="mt-6"
             >
-              Go to Dashboard
-            </button>
-          </>
-        )}
+              <button
+                onClick={() => router.push('/app')}
+                className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 transition-colors"
+              >
+                Go to Dashboard
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

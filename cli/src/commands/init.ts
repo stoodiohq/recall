@@ -30,8 +30,9 @@ export async function initCommand(): Promise<void> {
 
   console.log(chalk.green('✓ Created .recall/ directory'));
   console.log(chalk.green('✓ Created events.jsonl'));
-  console.log(chalk.green('✓ Created snapshots (small.md, medium.md, large.md)'));
-  console.log(chalk.green('✓ Created .recallignore'));
+  console.log(chalk.green('✓ Created context.md (team brain)'));
+  console.log(chalk.green('✓ Created history.md (encyclopedia)'));
+  console.log(chalk.green('✓ Created sessions/ folder'));
   console.log(chalk.green('✓ Created .gitattributes for merge strategy'));
 
   // Check for installed extractors
@@ -50,5 +51,5 @@ export async function initCommand(): Promise<void> {
   console.log('  2. Run ' + chalk.cyan('recall save') + ' to capture context');
   console.log('  3. Commit and push to share with your team');
   console.log();
-  console.log(chalk.dim('Your AI will read .recall/small.md for team context.'));
+  console.log(chalk.dim('Your AI will read .recall/context.md for team context.'));
 }

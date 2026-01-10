@@ -33,8 +33,8 @@ interface SaveOptions {
 }
 
 interface ApiSummaryResponse {
-  small: string;
-  medium: string;
+  context: string;
+  history: string;
   warning?: string;
 }
 
@@ -165,20 +165,20 @@ export async function saveCommand(options: SaveOptions = {}): Promise<void> {
   const projectName = getProjectName(repoRoot);
 
   // Try API summarization first, fall back to local
-  let snapshots: { small: string; medium: string; large: string };
+  let memoryFiles: { context: string; history: string; sessionFiles: Map<string, string> };
 
   if (useApi && isAuthenticated()) {
     log(chalk.cyan('Generating AI summaries...'));
     const apiResult = await getAiSummaries(allEvents, projectName);
 
     if (apiResult) {
-      // Use AI-generated summaries for small and medium
-      // Large is always the full event log (generated locally)
-      const localSnapshots = regenerateSnapshots(allEvents);
-      snapshots = {
-        small: apiResult.small,
-        medium: apiResult.medium,
-        large: localSnapshots.large,
+      // Use AI-generated summaries for context and history
+      // Session files are always generated locally
+      const localResult = regenerateSnapshots(allEvents);
+      memoryFiles = {
+        context: apiResult.context,
+        history: apiResult.history,
+        sessionFiles: localResult.sessionFiles,
       };
 
       if (apiResult.warning) {
@@ -187,58 +187,67 @@ export async function saveCommand(options: SaveOptions = {}): Promise<void> {
       log(chalk.green('✓ AI summaries generated'));
     } else {
       // Fall back to local templates
-      snapshots = regenerateSnapshots(allEvents);
+      memoryFiles = regenerateSnapshots(allEvents);
       log(chalk.yellow('Using local templates (API unavailable)'));
     }
   } else {
     // Use local templates
-    snapshots = regenerateSnapshots(allEvents);
+    memoryFiles = regenerateSnapshots(allEvents);
   }
 
   // Check for encryption access
   const recallDir = getRecallDir(repoRoot);
-  const snapshotDir = path.join(recallDir, 'snapshots');
+  const sessionsDir = path.join(recallDir, 'sessions');
   const hasAccess = await hasEncryptionAccess();
+
+  // Ensure sessions directory exists
+  if (!fs.existsSync(sessionsDir)) {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+  }
 
   if (hasAccess) {
     // Encrypt and save
-    log(chalk.cyan('Encrypting snapshots...'));
+    log(chalk.cyan('Encrypting memory files...'));
     const key = await getEncryptionKey();
 
     if (key) {
-      // Write encrypted files
+      // Write encrypted context.md and history.md
       fs.writeFileSync(
-        path.join(snapshotDir, 'small.md.enc'),
-        encrypt(snapshots.small, key),
+        path.join(recallDir, 'context.md.enc'),
+        encrypt(memoryFiles.context, key),
         { mode: 0o600 }
       );
       fs.writeFileSync(
-        path.join(snapshotDir, 'medium.md.enc'),
-        encrypt(snapshots.medium, key),
-        { mode: 0o600 }
-      );
-      fs.writeFileSync(
-        path.join(snapshotDir, 'large.md.enc'),
-        encrypt(snapshots.large, key),
+        path.join(recallDir, 'history.md.enc'),
+        encrypt(memoryFiles.history, key),
         { mode: 0o600 }
       );
 
+      // Write encrypted session files
+      for (const [sessionPath, content] of memoryFiles.sessionFiles) {
+        const fullPath = path.join(recallDir, sessionPath);
+        const dir = path.dirname(fullPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(fullPath + '.enc', encrypt(content, key), { mode: 0o600 });
+      }
+
       // Remove unencrypted files if they exist
-      const unencrypted = ['small.md', 'medium.md', 'large.md'];
+      const unencrypted = ['context.md', 'history.md'];
       for (const file of unencrypted) {
-        const filePath = path.join(snapshotDir, file);
+        const filePath = path.join(recallDir, file);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }
       }
 
-      log(chalk.green('✓ Encrypted snapshots saved'));
+      log(chalk.green('✓ Encrypted memory files saved'));
     } else {
       // Shouldn't happen if hasAccess is true, but fallback
-      writeSnapshot(repoRoot, 'small', snapshots.small);
-      writeSnapshot(repoRoot, 'medium', snapshots.medium);
-      writeSnapshot(repoRoot, 'large', snapshots.large);
-      log(chalk.yellow('Snapshots saved (unencrypted - no key available)'));
+      writeSnapshot(repoRoot, 'context', memoryFiles.context);
+      writeSnapshot(repoRoot, 'history', memoryFiles.history);
+      log(chalk.yellow('Memory files saved (unencrypted - no key available)'));
     }
   } else {
     // No encryption access - check if this is free tier or no auth
@@ -246,17 +255,15 @@ export async function saveCommand(options: SaveOptions = {}): Promise<void> {
 
     if (keyResult.error === 'No team membership') {
       // Save unencrypted for free/solo users
-      writeSnapshot(repoRoot, 'small', snapshots.small);
-      writeSnapshot(repoRoot, 'medium', snapshots.medium);
-      writeSnapshot(repoRoot, 'large', snapshots.large);
-      log(chalk.green('✓ Snapshots saved'));
+      writeSnapshot(repoRoot, 'context', memoryFiles.context);
+      writeSnapshot(repoRoot, 'history', memoryFiles.history);
+      log(chalk.green('✓ Memory files saved'));
       log(chalk.dim('Tip: Subscribe at recall.team for encrypted team sharing'));
     } else if (keyResult.error) {
       logError(chalk.red(`Encryption error: ${keyResult.message}`));
       // Still save unencrypted as fallback
-      writeSnapshot(repoRoot, 'small', snapshots.small);
-      writeSnapshot(repoRoot, 'medium', snapshots.medium);
-      writeSnapshot(repoRoot, 'large', snapshots.large);
+      writeSnapshot(repoRoot, 'context', memoryFiles.context);
+      writeSnapshot(repoRoot, 'history', memoryFiles.history);
     }
   }
 

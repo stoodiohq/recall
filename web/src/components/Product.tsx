@@ -38,16 +38,16 @@ export function Product() {
             <div className="ml-4 text-text-secondary">├── .git/</div>
             <div className="ml-4 text-accent">├── .recall/</div>
             <div className="ml-8 text-text-secondary">
-              ├── <span className="text-text-primary">small.md</span>
-              <span className="text-text-muted ml-4">Quick context (~500 tokens)</span>
+              ├── <span className="text-text-primary">context.md</span>
+              <span className="text-text-muted ml-4">Team brain (~1.5-3k tokens)</span>
             </div>
             <div className="ml-8 text-text-secondary">
-              ├── <span className="text-text-primary">medium.md</span>
-              <span className="text-text-muted ml-4">Recent sessions (~5k tokens)</span>
+              ├── <span className="text-text-primary">history.md</span>
+              <span className="text-text-muted ml-4">Encyclopedia (~30k tokens)</span>
             </div>
             <div className="ml-8 text-text-secondary">
-              └── <span className="text-text-primary">large.md</span>
-              <span className="text-text-muted ml-4">Full history (~50k tokens)</span>
+              └── <span className="text-text-primary">sessions/</span>
+              <span className="text-text-muted ml-4">Full transcripts (~1.5k each)</span>
             </div>
             <div className="ml-4 text-text-secondary">├── src/</div>
             <div className="ml-4 text-text-secondary">└── package.json</div>

@@ -1,9 +1,13 @@
 /**
  * Snapshot generator
- * Creates small.md, medium.md, large.md from events
+ * Creates context.md, history.md from events
+ *
+ * context.md - Team brain, loads every session (~1.5-3K tokens)
+ * history.md - Encyclopedia for onboarding and learning (~30K+ tokens)
+ * sessions/ - Individual session records (~1.5K each)
  *
  * Local mode: Template-based summarization
- * Cloud mode: AI-powered summarization (future)
+ * Cloud mode: AI-powered summarization (Phase 3)
  */
 
 import { RecallEvent } from './types.js';
@@ -40,10 +44,10 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * Generate small.md - Quick context (~500 tokens)
+ * Generate context.md - Team brain (~1.5-3K tokens)
  * Focus: What does the AI need to know RIGHT NOW?
  */
-export function generateSmallSnapshot(events: RecallEvent[]): string {
+export function generateContextSnapshot(events: RecallEvent[]): string {
   if (events.length === 0) {
     return `# Team Context
 
@@ -112,10 +116,10 @@ ${recentSession.summary}
 }
 
 /**
- * Generate medium.md - Session history (~4000 tokens)
- * Focus: What happened recently? Who did what?
+ * Generate history.md - Encyclopedia (~30K+ tokens)
+ * Focus: Full history for onboarding and deep learning
  */
-export function generateMediumSnapshot(events: RecallEvent[]): string {
+export function generateHistorySnapshot(events: RecallEvent[]): string {
   if (events.length === 0) {
     return `# Session History
 
@@ -149,60 +153,70 @@ _No sessions captured yet._
 }
 
 /**
- * Generate large.md - Full transcripts (~32000 tokens)
- * Focus: Complete history for deep context
+ * Generate a single session file content
+ * Format: sessions/YYYY-MM/username/DD-HHMM.md
  */
-export function generateLargeSnapshot(events: RecallEvent[]): string {
-  if (events.length === 0) {
-    return `# Full History
+export function generateSessionFile(event: RecallEvent): string {
+  const date = new Date(event.ts);
+  const dateStr = date.toISOString().split('T')[0];
 
-_No sessions captured yet._
+  let content = `# Session ${dateStr} (${formatUser(event.user)})
+
+## Summary
+${event.summary}
+
+## Type
+${event.type}
+`;
+
+  if (event.files?.length) {
+    content += `
+## Files Changed
+${event.files.map(f => `- ${f}`).join('\n')}
 `;
   }
 
-  const grouped = groupEventsByDate(events);
-
-  let content = `# Full History
-
-Total events: ${events.length}
-Date range: ${events[0].ts.split('T')[0]} to ${events[events.length - 1].ts.split('T')[0]}
-
+  content += `
+---
+_Tool: ${event.tool}_
 `;
-
-  for (const group of grouped) {
-    content += `## ${group.date}\n\n`;
-
-    for (const event of group.events) {
-      content += `### ${event.ts.split('T')[1].slice(0, 5)} - ${formatUser(event.user)} (${event.tool})\n\n`;
-      content += `**Type:** ${event.type}\n\n`;
-      content += `${event.summary}\n\n`;
-      if (event.files?.length) {
-        content += `**Files:** ${event.files.join(', ')}\n\n`;
-      }
-      content += `---\n\n`;
-    }
-
-    // Stop if too long
-    if (estimateTokens(content) > 32000) {
-      content += `\n_History truncated. ${events.length - grouped.indexOf(group) * 10} older events not shown._\n`;
-      break;
-    }
-  }
 
   return content;
+}
+
+/**
+ * Get the session file path for an event
+ * Format: sessions/YYYY-MM/username/DD-HHMM.md
+ */
+export function getSessionFilePath(event: RecallEvent): string {
+  const date = new Date(event.ts);
+  const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  const username = event.user.split('@')[0];
+  const day = String(date.getDate()).padStart(2, '0');
+  const time = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`;
+
+  return `sessions/${yearMonth}/${username}/${day}-${time}.md`;
 }
 
 /**
  * Regenerate all snapshots from events
  */
 export function regenerateSnapshots(events: RecallEvent[]): {
-  small: string;
-  medium: string;
-  large: string;
+  context: string;
+  history: string;
+  sessionFiles: Map<string, string>; // path -> content
 } {
+  const sessionFiles = new Map<string, string>();
+
+  for (const event of events) {
+    const filePath = getSessionFilePath(event);
+    const content = generateSessionFile(event);
+    sessionFiles.set(filePath, content);
+  }
+
   return {
-    small: generateSmallSnapshot(events),
-    medium: generateMediumSnapshot(events),
-    large: generateLargeSnapshot(events),
+    context: generateContextSnapshot(events),
+    history: generateHistorySnapshot(events),
+    sessionFiles,
   };
 }

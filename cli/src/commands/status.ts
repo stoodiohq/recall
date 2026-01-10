@@ -88,17 +88,16 @@ export async function statusCommand(): Promise<void> {
 
   console.log();
 
-  // Snapshot sizes
-  console.log(chalk.bold('Snapshots:'));
-  const small = readSnapshot(repoRoot, 'small');
-  const medium = readSnapshot(repoRoot, 'medium');
-  const large = readSnapshot(repoRoot, 'large');
+  // Memory file sizes
+  console.log(chalk.bold('Memory Files:'));
+  const context = readSnapshot(repoRoot, 'context');
+  const history = readSnapshot(repoRoot, 'history');
 
   const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
-  console.log(`  small.md: ~${estimateTokens(small)} tokens`);
-  console.log(`  medium.md: ~${estimateTokens(medium)} tokens`);
-  console.log(`  large.md: ~${estimateTokens(large)} tokens`);
+  console.log(`  context.md: ~${estimateTokens(context)} tokens`);
+  console.log(`  history.md: ~${estimateTokens(history)} tokens`);
+  console.log(`  sessions/: (individual session files)`);
   console.log();
 
   // Installed extractors

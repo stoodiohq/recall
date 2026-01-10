@@ -15,21 +15,21 @@ import {
   getRecallDir
 } from '../core/storage.js';
 import {
-  decryptSnapshots,
+  decryptMemoryFiles,
   hasEncryptionAccess,
   fetchTeamKey
 } from '../core/encryption.js';
 
-type SnapshotSize = 'small' | 'medium' | 'large';
+type MemoryType = 'context' | 'history';
 
 interface LoadOptions {
-  size?: SnapshotSize;
+  type?: MemoryType;
   format?: 'plain' | 'json';
   quiet?: boolean;
 }
 
 export async function loadCommand(options: LoadOptions = {}): Promise<void> {
-  const { size = 'small', format = 'plain', quiet = false } = options;
+  const { type = 'context', format = 'plain', quiet = false } = options;
 
   const log = quiet ? () => {} : (msg: string) => console.error(msg);
   const logError = console.error;
@@ -50,11 +50,11 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
   }
 
   const recallDir = getRecallDir(repoRoot);
-  const snapshotDir = path.join(recallDir, 'snapshots');
+  const filename = type === 'context' ? 'context.md' : 'history.md';
 
   // Check for encrypted files
-  const encryptedPath = path.join(snapshotDir, `${size}.md.enc`);
-  const plainPath = path.join(snapshotDir, `${size}.md`);
+  const encryptedPath = path.join(recallDir, `${filename}.enc`);
+  const plainPath = path.join(recallDir, filename);
 
   if (fs.existsSync(encryptedPath)) {
     // Encrypted file exists - need to decrypt
@@ -92,8 +92,8 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
       }
     }
 
-    // Decrypt all snapshots
-    const result = await decryptSnapshots(recallDir);
+    // Decrypt memory files
+    const result = await decryptMemoryFiles(recallDir);
 
     if (!result.success) {
       logError(chalk.red('Decryption failed.'));
@@ -101,10 +101,10 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    const content = result.snapshots[size];
+    const content = result.files[type];
 
     if (!content) {
-      logError(chalk.yellow(`No ${size} snapshot found.`));
+      logError(chalk.yellow(`No ${filename} found.`));
       process.exit(0);
     }
 
@@ -114,7 +114,7 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
     if (format === 'json') {
       console.log(JSON.stringify({
         success: true,
-        size,
+        type,
         content,
         tokens: estimateTokens(content),
       }));
@@ -122,13 +122,13 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
       console.log(content);
     }
   } else if (fs.existsSync(plainPath)) {
-    // Unencrypted file (free tier or legacy)
+    // Unencrypted file
     const content = fs.readFileSync(plainPath, 'utf8');
 
     if (format === 'json') {
       console.log(JSON.stringify({
         success: true,
-        size,
+        type,
         content,
         tokens: estimateTokens(content),
         encrypted: false,
@@ -137,15 +137,15 @@ export async function loadCommand(options: LoadOptions = {}): Promise<void> {
       console.log(content);
     }
   } else {
-    // No snapshot exists
-    logError(chalk.yellow(`No ${size} snapshot found.`));
+    // No file exists
+    logError(chalk.yellow(`No ${filename} found.`));
     logError(chalk.dim('Run `recall save` to capture context.'));
 
     if (format === 'json') {
       console.log(JSON.stringify({
         success: false,
-        error: 'no_snapshot',
-        message: `No ${size} snapshot exists. Run 'recall save' first.`,
+        error: 'no_file',
+        message: `No ${filename} exists. Run 'recall save' first.`,
       }));
     }
     process.exit(0);
@@ -165,13 +165,13 @@ function estimateTokens(text: string): number {
  */
 export async function loadContext(
   repoRoot: string,
-  size: SnapshotSize = 'small'
+  type: MemoryType = 'context'
 ): Promise<{ content: string | null; error?: string }> {
   const recallDir = getRecallDir(repoRoot);
-  const snapshotDir = path.join(recallDir, 'snapshots');
+  const filename = type === 'context' ? 'context.md' : 'history.md';
 
-  const encryptedPath = path.join(snapshotDir, `${size}.md.enc`);
-  const plainPath = path.join(snapshotDir, `${size}.md`);
+  const encryptedPath = path.join(recallDir, `${filename}.enc`);
+  const plainPath = path.join(recallDir, filename);
 
   if (fs.existsSync(encryptedPath)) {
     const hasAccess = await hasEncryptionAccess();
@@ -183,13 +183,13 @@ export async function loadContext(
       };
     }
 
-    const result = await decryptSnapshots(recallDir);
+    const result = await decryptMemoryFiles(recallDir);
 
     if (!result.success) {
       return { content: null, error: result.error };
     }
 
-    return { content: result.snapshots[size] || null };
+    return { content: result.files[type] || null };
   } else if (fs.existsSync(plainPath)) {
     return { content: fs.readFileSync(plainPath, 'utf8') };
   }

@@ -201,7 +201,7 @@ export default function ReposPage() {
         });
       }
 
-      router.push('/dashboard?refresh=1');
+      router.push('/app?refresh=1');
     } catch (err) {
       console.error('Failed to save repos:', err);
       setError('Failed to save repository changes');
@@ -230,7 +230,7 @@ export default function ReposPage() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => router.push('/dashboard')}
+                onClick={() => router.push('/app')}
                 className="text-text-tertiary hover:text-text-primary transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

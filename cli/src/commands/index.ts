@@ -5,3 +5,4 @@ export { saveCommand } from './save.js';
 export { setupCommand } from './setup.js';
 export { statusCommand } from './status.js';
 export { syncCommand } from './sync.js';
+export { uninstallCommand } from './uninstall.js';

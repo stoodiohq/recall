@@ -21,7 +21,7 @@ const lines: Line[] = [
   { type: 'output', text: 'src/', delay: 2600 },
   { type: 'output', text: 'package.json', delay: 2700 },
   { type: 'output', text: '', delay: 2900 },
-  { type: 'prompt', text: '$ cat .recall/small.md', delay: 3300 },
+  { type: 'prompt', text: '$ cat .recall/context.md', delay: 3300 },
   { type: 'output', text: '# Team Context', delay: 3700 },
   { type: 'output', text: '- Auth uses Supabase (decision: Nov 3, @devon)', delay: 3900 },
   { type: 'output', text: '- Don\'t use moment.js - broke build (failure: Nov 5)', delay: 4100 },

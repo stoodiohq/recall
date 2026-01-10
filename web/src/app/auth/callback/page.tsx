@@ -22,7 +22,18 @@ function AuthCallbackContent() {
     if (code) {
       loginWithCode(code).then((success) => {
         if (success) {
-          router.push('/dashboard');
+          // Check if we're in signup flow
+          const signupFlow = localStorage.getItem('signup_flow');
+          const joinCode = searchParams.get('join') || localStorage.getItem('join_invite_code');
+
+          if (signupFlow) {
+            router.push('/signup/team');
+          } else if (joinCode) {
+            localStorage.removeItem('join_invite_code');
+            router.push(`/join/${joinCode}`);
+          } else {
+            router.push('/app');
+          }
         } else {
           setError('Failed to authenticate');
         }

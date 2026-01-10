@@ -5,56 +5,39 @@ import { clsx } from 'clsx';
 
 const plans = [
   {
-    id: 'free',
-    name: 'Free',
-    price: '$0',
-    period: '',
-    description: 'For solo developers trying it out.',
-    features: [
-      '1 developer',
-      '1 repository',
-      '30 days history',
-      'AI-powered summaries',
-      'Works with any AI tool',
-    ],
-    cta: 'Get Started',
-    highlighted: false,
-  },
-  {
     id: 'team',
     name: 'Team',
-    price: '$10',
+    price: '$12',
     period: '/seat/mo',
     description: 'For dev teams who ship together.',
     features: [
-      'Unlimited developers',
       'Unlimited repos',
-      '1 year history',
-      'Team analytics',
+      'Unlimited sessions',
+      'AI-powered summaries',
       'Encrypted sharing',
-      'Priority support',
+      'We handle summarization',
     ],
     cta: 'Start Free Trial',
     highlighted: true,
     badge: 'Most Popular',
-    annual: '$8/seat billed annually',
+    annual: '$10/seat billed annually',
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
-    price: 'Custom',
-    period: '',
+    price: '$30',
+    period: '/seat/mo',
     description: 'For orgs with compliance needs.',
     features: [
       'Everything in Team',
-      'Unlimited history',
+      'Bring Your Own LLM Key',
+      'Code never touches our servers',
       'SSO / SAML',
-      'BYOK (your own LLM)',
       'SLA & dedicated support',
-      'On-prem available',
     ],
-    cta: "Let's Talk",
+    cta: 'Start Free Trial',
     highlighted: false,
+    annual: '$25/seat billed annually',
   },
 ];
 
@@ -82,7 +65,7 @@ export function Pricing() {
           Simple pricing. Scale with your team.
         </motion.p>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+        <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
           {plans.map((plan, index) => (
             <motion.div
               key={plan.name}

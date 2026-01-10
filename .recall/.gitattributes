@@ -1,4 +1,6 @@
 # Recall merge strategy
 events/events.jsonl merge=union
-snapshots/*.md merge=ours
+context.md merge=ours
+history.md merge=ours
+sessions/**/*.md merge=ours
 manifest.json merge=ours

@@ -2,13 +2,78 @@
  * Recall Cloud API
  * Cloudflare Workers + Hono + D1
  *
- * Endpoints:
- * - GET /health - Health check
+ * Auth Endpoints:
  * - GET /auth/github - Start GitHub OAuth flow
  * - GET /auth/github/callback - Handle OAuth callback
  * - GET /auth/me - Current user info
+ * - POST /auth/logout - End session
+ * - POST /auth/exchange - Exchange auth code for JWT
+ * - POST /auth/token - Generate API token
+ * - GET /auth/tokens - List API tokens
+ * - DELETE /auth/tokens/:tokenId - Delete API token
+ *
+ * Team CRUD Endpoints:
+ * - POST /teams - Create team
+ * - GET /teams/:id - Get team by ID (or 'me' for current user's team)
+ * - PATCH /teams/:id - Update team (name, website, industry)
+ * - DELETE /teams/:id - Delete team (owner only)
+ * - POST /teams/:id/transfer - Transfer ownership
+ *
+ * Team Members Endpoints:
+ * - GET /teams/:id/members - List members with stats
+ * - PATCH /teams/:id/members/:userId - Update member role
+ * - DELETE /teams/members/:userId - Remove member
+ * - GET /teams/:id/invite-link - Get/regenerate invite link
+ *
+ * Team Invites Endpoints:
+ * - POST /teams/invite - Create invite link
+ * - GET /invites/:code - Get invite details
+ * - POST /invites/:code/accept - Accept invite
+ * - GET /teams/invites - List team invites
+ * - DELETE /invites/:code - Revoke invite
+ *
+ * Stats Endpoints:
+ * - GET /teams/:id/stats - Team-wide stats
+ * - GET /teams/:id/members/:userId/stats - Per-member stats
+ *
+ * Activity/Session Endpoints:
+ * - GET /teams/:id/repos/:repoId/sessions - List sessions for repo
+ * - GET /teams/:id/repos/:repoId/context - Get current context.md
+ * - GET /teams/activity - Get team activity feed
+ * - POST /memory/access - Log memory file access
+ *
+ * Billing Endpoints:
+ * - GET /teams/:id/billing - Billing overview
+ * - GET /teams/:id/billing/invoices - List invoices
+ * - POST /checkout/create-session - Create Stripe checkout
+ * - POST /checkout/portal - Get Stripe customer portal
+ * - POST /webhooks/stripe - Stripe webhook handler
+ *
+ * Enterprise BYOK Endpoints:
+ * - GET /teams/:id/llm-key - Check if LLM key configured
+ * - POST /teams/:id/llm-key - Add/update LLM API key
+ * - DELETE /teams/:id/llm-key - Remove LLM key
+ * - POST /teams/:id/llm-key/test - Test LLM key validity
+ *
+ * Repository Endpoints:
+ * - GET /repos - Get enabled repos for team
+ * - POST /repos - Add a new repo
+ * - POST /repos/:repoId/toggle - Toggle repo enabled status
+ * - POST /repos/:repoId/initialize - Initialize repo with .recall/
+ * - GET /github/repos - Get user's GitHub repos
+ *
+ * License Endpoints:
  * - GET /license/check - Validate license
+ * - POST /license/activate - Activate machine
+ *
+ * Key Management:
+ * - GET /keys/team - Get team encryption key
+ * - POST /keys/rotate - Rotate encryption key
+ *
+ * Other:
+ * - GET /health - Health check
  * - POST /summarize - Get AI summaries for events
+ * - GET /i - Install script
  */
 
 import { Hono } from 'hono';
@@ -115,7 +180,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', cors({
   origin: ['https://recall.team', 'https://recall-web-e2p.pages.dev', 'http://localhost:3000', 'http://localhost:3003'],
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -268,6 +333,87 @@ async function hashToken(token: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Role hierarchy for permission checks
+type TeamRole = 'owner' | 'admin' | 'developer' | 'member';
+const ROLE_HIERARCHY: Record<TeamRole, number> = {
+  owner: 100,
+  admin: 50,
+  developer: 10,
+  member: 10, // Same as developer for backwards compatibility
+};
+
+interface TeamMembership {
+  teamId: string;
+  teamName: string;
+  teamSlug: string;
+  tier: string;
+  seats: number;
+  role: TeamRole;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  subscriptionStatus?: string;
+}
+
+// Get user's team membership with role
+async function getUserTeamMembership(
+  db: D1Database,
+  userId: string,
+  teamId?: string
+): Promise<TeamMembership | null> {
+  let query = `
+    SELECT t.id as team_id, t.name as team_name, t.slug as team_slug, t.tier, t.seats,
+           t.stripe_customer_id, t.stripe_subscription_id, t.subscription_status,
+           tm.role
+    FROM teams t
+    JOIN team_members tm ON tm.team_id = t.id
+    WHERE tm.user_id = ?
+  `;
+  const params: (string | undefined)[] = [userId];
+
+  if (teamId) {
+    query += ' AND t.id = ?';
+    params.push(teamId);
+  }
+
+  query += ' LIMIT 1';
+
+  const result = await db.prepare(query).bind(...params).first<{
+    team_id: string;
+    team_name: string;
+    team_slug: string;
+    tier: string;
+    seats: number;
+    stripe_customer_id: string | null;
+    stripe_subscription_id: string | null;
+    subscription_status: string | null;
+    role: TeamRole;
+  }>();
+
+  if (!result) return null;
+
+  return {
+    teamId: result.team_id,
+    teamName: result.team_name,
+    teamSlug: result.team_slug,
+    tier: result.tier,
+    seats: result.seats,
+    role: result.role,
+    stripeCustomerId: result.stripe_customer_id || undefined,
+    stripeSubscriptionId: result.stripe_subscription_id || undefined,
+    subscriptionStatus: result.subscription_status || undefined,
+  };
+}
+
+// Check if user has required role
+function hasRole(userRole: TeamRole, requiredRole: TeamRole): boolean {
+  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[requiredRole];
+}
+
+// Check if user can manage (owner or admin)
+function canManage(role: TeamRole): boolean {
+  return hasRole(role, 'admin');
 }
 
 // ============================================================
@@ -656,6 +802,299 @@ app.get('/auth/me', async (c) => {
       tier: membership.tier,
       seats: membership.seats,
     } : null,
+  });
+});
+
+// Logout - clear session/token
+app.post('/auth/logout', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  // If using API token, we could invalidate it here
+  // For JWT, we just return success since JWTs are stateless
+  // The client should clear their stored token
+
+  return c.json({
+    success: true,
+    message: 'Logged out successfully',
+  });
+});
+
+// ============================================================
+// Team CRUD endpoints
+// ============================================================
+
+// Get team by ID
+app.get('/teams/:id', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+
+  // Handle 'me' as alias for current user's team
+  if (teamId === 'me') {
+    const membership = await getUserTeamMembership(c.env.DB, user.id);
+    if (!membership) {
+      return c.json({ team: null });
+    }
+
+    // Get team members
+    const membersResult = await c.env.DB.prepare(`
+      SELECT u.id, u.email, u.name, u.avatar_url, u.github_username, tm.role, tm.joined_at
+      FROM users u
+      JOIN team_members tm ON tm.user_id = u.id
+      WHERE tm.team_id = ?
+      ORDER BY tm.joined_at
+    `).bind(membership.teamId).all();
+
+    return c.json({
+      team: {
+        id: membership.teamId,
+        name: membership.teamName,
+        slug: membership.teamSlug,
+        tier: membership.tier,
+        seats: membership.seats,
+        role: membership.role,
+        members: membersResult.results || [],
+      },
+    });
+  }
+
+  // Get specific team by ID
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Get team details
+  const team = await c.env.DB.prepare(`
+    SELECT t.*, u.name as owner_name, u.github_username as owner_github
+    FROM teams t
+    JOIN users u ON u.id = t.owner_id
+    WHERE t.id = ?
+  `).bind(teamId).first<Team & { owner_name: string; owner_github: string }>();
+
+  if (!team) {
+    return c.json({ error: 'Team not found' }, 404);
+  }
+
+  // Get team members
+  const membersResult = await c.env.DB.prepare(`
+    SELECT u.id, u.email, u.name, u.avatar_url, u.github_username, tm.role, tm.joined_at
+    FROM users u
+    JOIN team_members tm ON tm.user_id = u.id
+    WHERE tm.team_id = ?
+    ORDER BY tm.joined_at
+  `).bind(teamId).all();
+
+  return c.json({
+    team: {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      tier: team.tier,
+      seats: team.seats,
+      role: membership.role,
+      owner: {
+        name: team.owner_name,
+        github: team.owner_github,
+      },
+      members: membersResult.results || [],
+      subscriptionStatus: team.subscription_status,
+      createdAt: team.created_at,
+    },
+  });
+});
+
+// Update team (name, website, industry) - requires admin role
+app.patch('/teams/:id', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  const body = await c.req.json<{
+    name?: string;
+    website?: string;
+    industry?: string;
+  }>();
+
+  const updates: string[] = [];
+  const values: (string | null)[] = [];
+
+  if (body.name !== undefined) {
+    updates.push('name = ?');
+    values.push(body.name);
+  }
+  if (body.website !== undefined) {
+    updates.push('website = ?');
+    values.push(body.website || null);
+  }
+  if (body.industry !== undefined) {
+    updates.push('industry = ?');
+    values.push(body.industry || null);
+  }
+
+  if (updates.length === 0) {
+    return c.json({ error: 'No fields to update' }, 400);
+  }
+
+  updates.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(teamId);
+
+  await c.env.DB.prepare(`
+    UPDATE teams SET ${updates.join(', ')} WHERE id = ?
+  `).bind(...values).run();
+
+  // Get updated team
+  const team = await c.env.DB.prepare(`
+    SELECT * FROM teams WHERE id = ?
+  `).bind(teamId).first<Team>();
+
+  return c.json({
+    success: true,
+    team: team ? {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      tier: team.tier,
+    } : null,
+  });
+});
+
+// Delete team - requires owner role and confirmation
+app.delete('/teams/:id', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const confirm = c.req.query('confirm');
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (membership.role !== 'owner') {
+    return c.json({ error: 'Only the team owner can delete the team' }, 403);
+  }
+
+  if (confirm !== 'true') {
+    return c.json({
+      error: 'Confirmation required',
+      message: 'Add ?confirm=true to confirm team deletion. This action is irreversible.',
+    }, 400);
+  }
+
+  // Cancel Stripe subscription if exists
+  if (membership.stripeSubscriptionId) {
+    try {
+      await fetch(`https://api.stripe.com/v1/subscriptions/${membership.stripeSubscriptionId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+        },
+      });
+    } catch (err) {
+      console.error('[Delete Team] Failed to cancel Stripe subscription:', err);
+    }
+  }
+
+  // Delete team and related data (cascading)
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM team_invites WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM team_members WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM team_keys WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM repos WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM license_activations WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM memory_access_logs WHERE team_id = ?').bind(teamId),
+    c.env.DB.prepare('DELETE FROM teams WHERE id = ?').bind(teamId),
+  ]);
+
+  return c.json({
+    success: true,
+    message: 'Team deleted successfully',
+  });
+});
+
+// Transfer ownership - requires owner role
+app.post('/teams/:id/transfer', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const body = await c.req.json<{ newOwnerId: string }>();
+
+  if (!body.newOwnerId) {
+    return c.json({ error: 'newOwnerId is required' }, 400);
+  }
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (membership.role !== 'owner') {
+    return c.json({ error: 'Only the team owner can transfer ownership' }, 403);
+  }
+
+  // Verify new owner is a team member
+  const newOwnerMembership = await c.env.DB.prepare(`
+    SELECT user_id, role FROM team_members WHERE team_id = ? AND user_id = ?
+  `).bind(teamId, body.newOwnerId).first<{ user_id: string; role: string }>();
+
+  if (!newOwnerMembership) {
+    return c.json({ error: 'User is not a member of this team' }, 400);
+  }
+
+  if (body.newOwnerId === user.id) {
+    return c.json({ error: 'You are already the owner' }, 400);
+  }
+
+  const now = new Date().toISOString();
+
+  // Transfer ownership
+  await c.env.DB.batch([
+    // Update team owner_id
+    c.env.DB.prepare(`
+      UPDATE teams SET owner_id = ?, updated_at = ? WHERE id = ?
+    `).bind(body.newOwnerId, now, teamId),
+    // Demote current owner to admin
+    c.env.DB.prepare(`
+      UPDATE team_members SET role = 'admin' WHERE team_id = ? AND user_id = ?
+    `).bind(teamId, user.id),
+    // Promote new owner
+    c.env.DB.prepare(`
+      UPDATE team_members SET role = 'owner' WHERE team_id = ? AND user_id = ?
+    `).bind(teamId, body.newOwnerId),
+  ]);
+
+  return c.json({
+    success: true,
+    message: 'Ownership transferred successfully',
+    newOwnerId: body.newOwnerId,
   });
 });
 
@@ -1345,9 +1784,8 @@ ${repoStructure || 'Unable to fetch file structure'}
 ${readmeContent || 'No README found'}
 `;
 
-    let smallContent = '';
-    let mediumContent = '';
-    let largeContent = '';
+    let contextContent = '';
+    let historyContent = '';
 
     if (c.env.GEMINI_API_KEY) {
       // Generate with AI
@@ -1363,22 +1801,21 @@ This is the FIRST session - there's no history yet. Create initial memory files 
           callGemini(c.env.GEMINI_API_KEY, SMALL_SUMMARY_PROMPT, initPrompt),
           callGemini(c.env.GEMINI_API_KEY, MEDIUM_SUMMARY_PROMPT, initPrompt),
         ]);
-        smallContent = small;
-        mediumContent = medium;
+        contextContent = small;
+        historyContent = medium;
         console.log('[Initialize] Gemini API success');
       } catch (geminiError) {
         console.error('[Initialize] Gemini API failed:', geminiError);
         // Fall back to template if Gemini fails
-        smallContent = '';
-        mediumContent = '';
+        contextContent = '';
+        historyContent = '';
       }
 
-      if (!smallContent || !mediumContent) {
+      if (!contextContent || !historyContent) {
         console.log('[Initialize] Using template fallback');
-        smallContent = `# ${repo.name} - Team Context
+        contextContent = `# ${repo.name} - Team Context
 
 Sessions: 0 | Last: ${new Date().toISOString().split('T')[0]}
-Tokens: small ~300 | medium ~500 | large ~800
 
 ## What It Is
 ${repo.description || 'A development project.'}
@@ -1392,37 +1829,20 @@ ${repo.description || 'A development project.'}
 _No decisions recorded yet._
 
 ---
-*medium.md = session history | large.md = full transcripts*
+*history.md = session history | sessions/ = full transcripts*
 `;
-        mediumContent = `# ${repo.name} - Development History
+        historyContent = `# ${repo.name} - Development History
 
 Sessions: 0 | Updated: ${new Date().toISOString().split('T')[0]}
 
 _No sessions yet. Start using your AI coding assistant to begin building team memory._
 `;
       }
-      largeContent = `# ${repo.name} - Full Context
-
-## Initialization
-
-Date: ${new Date().toISOString()}
-Initialized by: @${user.github_username}
-
-## Repository Info
-- **Full Name:** ${repo.full_name}
-- **Description:** ${repo.description || 'No description'}
-- **Language:** ${repo.language || 'Unknown'}
-
----
-
-*This is the initial setup. Session transcripts will be added here as the team uses AI coding tools.*
-`;
     } else {
       // Template fallback
-      smallContent = `# ${repo.name} - Team Context
+      contextContent = `# ${repo.name} - Team Context
 
 Sessions: 0 | Last: ${new Date().toISOString().split('T')[0]}
-Tokens: small ~300 | medium ~500 | large ~800
 
 ## What It Is
 ${repo.description || 'A development project.'}
@@ -1439,38 +1859,25 @@ _No decisions recorded yet. Use your AI coding assistant and decisions will be c
 _File tracking will begin with your first AI session._
 
 ---
-*medium.md = session history | large.md = full transcripts*
+*history.md = session history | sessions/ = full transcripts*
 `;
 
-      mediumContent = `# ${repo.name} - Development History
+      historyContent = `# ${repo.name} - Development History
 
 Sessions: 0 | Updated: ${new Date().toISOString().split('T')[0]}
 
 _No sessions yet. Start using your AI coding assistant to begin building team memory._
 
 ---
-*See large.md for complete chat transcripts*
-`;
-
-      largeContent = `# ${repo.name} - Full Context
-
-## Initialization
-
-Date: ${new Date().toISOString()}
-Initialized by: @${user.github_username}
-
----
-
-*Session transcripts will be appended here.*
+*See sessions/ folder for complete chat transcripts*
 `;
     }
-    console.log('[Initialize] Step 4 complete, content lengths:', smallContent.length, mediumContent.length, largeContent.length);
+    console.log('[Initialize] Step 4 complete, content lengths:', contextContent.length, historyContent.length);
 
     // 5. Encrypt the content
     console.log('[Initialize] Step 5: Encrypting content...');
-    const encryptedSmall = await encryptContent(smallContent, teamKey.encryption_key);
-    const encryptedMedium = await encryptContent(mediumContent, teamKey.encryption_key);
-    const encryptedLarge = await encryptContent(largeContent, teamKey.encryption_key);
+    const encryptedContext = await encryptContent(contextContent, teamKey.encryption_key);
+    const encryptedHistory = await encryptContent(historyContent, teamKey.encryption_key);
     console.log('[Initialize] Step 5 complete, encrypted');
 
     // 6. Get current commit SHA
@@ -1511,10 +1918,9 @@ Initialized by: @${user.github_username}
       return blobData.sha;
     };
 
-    const [smallSha, mediumSha, largeSha, readmeSha] = await Promise.all([
-      createBlob(encryptedSmall),
-      createBlob(encryptedMedium),
-      createBlob(encryptedLarge),
+    const [contextSha, historySha, readmeSha] = await Promise.all([
+      createBlob(encryptedContext),
+      createBlob(encryptedHistory),
       createBlob(`# Recall Team Memory
 
 This directory contains encrypted team memory files managed by [Recall](https://recall.team).
@@ -1523,9 +1929,9 @@ These files are encrypted with your team's key. Only team members with active Re
 
 ## Files
 
-- **small.md** - Quick context (~500 tokens) - loaded automatically
-- **medium.md** - Session history (~4k tokens) - on demand
-- **large.md** - Full transcripts (~50k tokens) - searchable
+- **context.md** - Team brain (~1.5-3k tokens) - loaded every session
+- **history.md** - Encyclopedia (~30k tokens) - for onboarding and deep dives
+- **sessions/** - Individual session records (~1.5k each) - full transcripts
 
 ## Usage
 
@@ -1563,9 +1969,8 @@ Learn more at [recall.team](https://recall.team)
       body: JSON.stringify({
         base_tree: baseCommit.tree.sha,
         tree: [
-          { path: '.recall/small.md', mode: '100644', type: 'blob', sha: smallSha },
-          { path: '.recall/medium.md', mode: '100644', type: 'blob', sha: mediumSha },
-          { path: '.recall/large.md', mode: '100644', type: 'blob', sha: largeSha },
+          { path: '.recall/context.md', mode: '100644', type: 'blob', sha: contextSha },
+          { path: '.recall/history.md', mode: '100644', type: 'blob', sha: historySha },
           { path: '.recall/README.md', mode: '100644', type: 'blob', sha: readmeSha },
         ],
       }),
@@ -1622,7 +2027,7 @@ Learn more at [recall.team](https://recall.team)
       success: true,
       message: `Recall initialized in ${repo.full_name}`,
       commitSha: newCommit.sha,
-      files: ['.recall/small.md', '.recall/medium.md', '.recall/large.md', '.recall/README.md'],
+      files: ['.recall/context.md', '.recall/history.md', '.recall/README.md'],
     });
 
   } catch (error) {
@@ -2014,6 +2419,177 @@ app.get('/teams/me', async (c) => {
 });
 
 // ============================================================
+// Team Members endpoints
+// ============================================================
+
+// List team members with stats
+app.get('/teams/:id/members', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Get team members with stats
+  const membersResult = await c.env.DB.prepare(`
+    SELECT
+      u.id, u.email, u.name, u.avatar_url, u.github_username,
+      tm.role, tm.joined_at,
+      (SELECT COUNT(*) FROM memory_access_logs WHERE user_id = u.id AND team_id = ?) as session_count,
+      (SELECT MAX(created_at) FROM memory_access_logs WHERE user_id = u.id AND team_id = ?) as last_active
+    FROM users u
+    JOIN team_members tm ON tm.user_id = u.id
+    WHERE tm.team_id = ?
+    ORDER BY tm.joined_at
+  `).bind(teamId, teamId, teamId).all();
+
+  return c.json({
+    members: (membersResult.results || []).map((m: Record<string, unknown>) => ({
+      id: m.id,
+      email: m.email,
+      name: m.name,
+      avatarUrl: m.avatar_url,
+      githubUsername: m.github_username,
+      role: m.role,
+      joinedAt: m.joined_at,
+      sessionCount: m.session_count || 0,
+      lastActive: m.last_active,
+    })),
+  });
+});
+
+// Update member role
+app.patch('/teams/:id/members/:userId', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const targetUserId = c.req.param('userId');
+  const body = await c.req.json<{ role: string }>();
+
+  if (!body.role || !['admin', 'developer', 'member'].includes(body.role)) {
+    return c.json({ error: 'Invalid role. Must be admin, developer, or member.' }, 400);
+  }
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  // Get target user's current role
+  const targetMembership = await c.env.DB.prepare(`
+    SELECT role FROM team_members WHERE team_id = ? AND user_id = ?
+  `).bind(teamId, targetUserId).first<{ role: string }>();
+
+  if (!targetMembership) {
+    return c.json({ error: 'User is not a member of this team' }, 404);
+  }
+
+  // Cannot change owner role - must use transfer endpoint
+  if (targetMembership.role === 'owner') {
+    return c.json({ error: 'Cannot change owner role. Use transfer endpoint instead.' }, 400);
+  }
+
+  // Cannot promote to owner
+  if (body.role === 'owner') {
+    return c.json({ error: 'Cannot promote to owner. Use transfer endpoint instead.' }, 400);
+  }
+
+  // Only owner can promote to admin
+  if (body.role === 'admin' && membership.role !== 'owner') {
+    return c.json({ error: 'Only owner can promote to admin' }, 403);
+  }
+
+  await c.env.DB.prepare(`
+    UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ?
+  `).bind(body.role, teamId, targetUserId).run();
+
+  return c.json({
+    success: true,
+    userId: targetUserId,
+    role: body.role,
+  });
+});
+
+// Get or regenerate invite link
+app.get('/teams/:id/invite-link', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const regenerate = c.req.query('regenerate') === 'true';
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  // Check for existing general invite (no specific email)
+  let invite = await c.env.DB.prepare(`
+    SELECT id, code, expires_at, created_at
+    FROM team_invites
+    WHERE team_id = ? AND email IS NULL AND accepted_at IS NULL AND expires_at > datetime('now')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(teamId).first<{ id: string; code: string; expires_at: string; created_at: string }>();
+
+  // Regenerate if requested or no active invite exists
+  if (regenerate || !invite) {
+    // Delete old general invites
+    await c.env.DB.prepare(`
+      DELETE FROM team_invites WHERE team_id = ? AND email IS NULL
+    `).bind(teamId).run();
+
+    // Create new invite
+    const code = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    const inviteId = generateId();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+    await c.env.DB.prepare(`
+      INSERT INTO team_invites (id, team_id, code, email, invited_by, role, expires_at, created_at)
+      VALUES (?, ?, ?, NULL, ?, 'developer', ?, ?)
+    `).bind(inviteId, teamId, code, user.id, expiresAt.toISOString(), now.toISOString()).run();
+
+    invite = {
+      id: inviteId,
+      code,
+      expires_at: expiresAt.toISOString(),
+      created_at: now.toISOString(),
+    };
+  }
+
+  const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+
+  return c.json({
+    code: invite.code,
+    url: `${baseUrl}/invite?code=${invite.code}`,
+    expiresAt: invite.expires_at,
+    createdAt: invite.created_at,
+  });
+});
+
+// ============================================================
 // Team Invite endpoints (Magic Links)
 // ============================================================
 
@@ -2359,6 +2935,704 @@ app.delete('/teams/members/:userId', async (c) => {
 });
 
 // ============================================================
+// Team Stats endpoints
+// ============================================================
+
+// Get team-wide stats
+app.get('/teams/:id/stats', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Get various stats
+  const [memberCount, repoCount, sessionCount, sessionsThisWeek] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM team_members WHERE team_id = ?
+    `).bind(teamId).first<{ count: number }>(),
+
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM repos WHERE team_id = ? AND enabled = 1
+    `).bind(teamId).first<{ count: number }>(),
+
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM memory_access_logs WHERE team_id = ?
+    `).bind(teamId).first<{ count: number }>(),
+
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM memory_access_logs
+      WHERE team_id = ? AND created_at > datetime('now', '-7 days')
+    `).bind(teamId).first<{ count: number }>(),
+  ]);
+
+  return c.json({
+    stats: {
+      memberCount: memberCount?.count || 0,
+      repoCount: repoCount?.count || 0,
+      sessionCount: sessionCount?.count || 0,
+      sessionsThisWeek: sessionsThisWeek?.count || 0,
+      seats: membership.seats,
+      seatsUsed: memberCount?.count || 0,
+      tier: membership.tier,
+    },
+  });
+});
+
+// Get per-member stats
+app.get('/teams/:id/members/:userId/stats', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const targetUserId = c.req.param('userId');
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Verify target user is in the team
+  const targetMembership = await c.env.DB.prepare(`
+    SELECT tm.role, tm.joined_at, u.name, u.github_username
+    FROM team_members tm
+    JOIN users u ON u.id = tm.user_id
+    WHERE tm.team_id = ? AND tm.user_id = ?
+  `).bind(teamId, targetUserId).first<{
+    role: string;
+    joined_at: string;
+    name: string;
+    github_username: string;
+  }>();
+
+  if (!targetMembership) {
+    return c.json({ error: 'User not found in this team' }, 404);
+  }
+
+  // Get user stats
+  const [sessionCount, sessionsThisWeek, lastActive, recentActivity] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM memory_access_logs
+      WHERE user_id = ? AND team_id = ?
+    `).bind(targetUserId, teamId).first<{ count: number }>(),
+
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM memory_access_logs
+      WHERE user_id = ? AND team_id = ? AND created_at > datetime('now', '-7 days')
+    `).bind(targetUserId, teamId).first<{ count: number }>(),
+
+    c.env.DB.prepare(`
+      SELECT MAX(created_at) as last_active FROM memory_access_logs
+      WHERE user_id = ? AND team_id = ?
+    `).bind(targetUserId, teamId).first<{ last_active: string | null }>(),
+
+    c.env.DB.prepare(`
+      SELECT file_type, action, repo_name, created_at
+      FROM memory_access_logs
+      WHERE user_id = ? AND team_id = ?
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).bind(targetUserId, teamId).all(),
+  ]);
+
+  return c.json({
+    user: {
+      id: targetUserId,
+      name: targetMembership.name,
+      githubUsername: targetMembership.github_username,
+      role: targetMembership.role,
+      joinedAt: targetMembership.joined_at,
+    },
+    stats: {
+      sessionCount: sessionCount?.count || 0,
+      sessionsThisWeek: sessionsThisWeek?.count || 0,
+      lastActive: lastActive?.last_active,
+    },
+    recentActivity: (recentActivity.results || []).map((a: Record<string, unknown>) => ({
+      fileType: a.file_type,
+      action: a.action,
+      repoName: a.repo_name,
+      createdAt: a.created_at,
+    })),
+  });
+});
+
+// ============================================================
+// Activity/Session endpoints
+// ============================================================
+
+// List sessions for a repo (paginated)
+app.get('/teams/:id/repos/:repoId/sessions', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const repoId = c.req.param('repoId');
+  const limit = parseInt(c.req.query('limit') || '50', 10);
+  const offset = parseInt(c.req.query('offset') || '0', 10);
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Verify repo belongs to team
+  const repo = await c.env.DB.prepare(`
+    SELECT id, name, full_name FROM repos WHERE id = ? AND team_id = ?
+  `).bind(repoId, teamId).first<{ id: string; name: string; full_name: string }>();
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
+  // Get sessions (memory access logs) for this repo
+  const result = await c.env.DB.prepare(`
+    SELECT
+      mal.id, mal.file_type, mal.action, mal.created_at,
+      u.id as user_id, u.name as user_name, u.github_username
+    FROM memory_access_logs mal
+    JOIN users u ON u.id = mal.user_id
+    WHERE mal.team_id = ? AND mal.repo_name = ?
+    ORDER BY mal.created_at DESC
+    LIMIT ? OFFSET ?
+  `).bind(teamId, repo.full_name, limit, offset).all();
+
+  const totalResult = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM memory_access_logs
+    WHERE team_id = ? AND repo_name = ?
+  `).bind(teamId, repo.full_name).first<{ count: number }>();
+
+  return c.json({
+    repo: {
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+    },
+    sessions: (result.results || []).map((s: Record<string, unknown>) => ({
+      id: s.id,
+      fileType: s.file_type,
+      action: s.action,
+      createdAt: s.created_at,
+      user: {
+        id: s.user_id,
+        name: s.user_name,
+        githubUsername: s.github_username,
+      },
+    })),
+    pagination: {
+      total: totalResult?.count || 0,
+      limit,
+      offset,
+    },
+  });
+});
+
+// Get current context.md content for a repo (fetches from GitHub)
+app.get('/teams/:id/repos/:repoId/context', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const repoId = c.req.param('repoId');
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  // Verify repo belongs to team
+  const repo = await c.env.DB.prepare(`
+    SELECT id, full_name FROM repos WHERE id = ? AND team_id = ?
+  `).bind(repoId, teamId).first<{ id: string; full_name: string }>();
+
+  if (!repo) {
+    return c.json({ error: 'Repository not found' }, 404);
+  }
+
+  if (!user.github_access_token) {
+    return c.json({ error: 'GitHub token not available. Please re-authenticate.' }, 400);
+  }
+
+  try {
+    // Fetch context.md from GitHub
+    const response = await fetch(`https://api.github.com/repos/${repo.full_name}/contents/.recall/context.md`, {
+      headers: {
+        'Authorization': `Bearer ${user.github_access_token}`,
+        'User-Agent': 'Recall-API',
+        'Accept': 'application/vnd.github.v3.raw',
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return c.json({
+          found: false,
+          message: 'context.md not found. Repository may not be initialized.',
+        });
+      }
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+
+    const content = await response.text();
+
+    // Check if encrypted
+    const isEncrypted = content.startsWith('RECALL_ENCRYPTED:');
+
+    return c.json({
+      found: true,
+      encrypted: isEncrypted,
+      content: isEncrypted ? null : content,
+      message: isEncrypted ? 'Content is encrypted. Decrypt with team key.' : undefined,
+    });
+  } catch (error) {
+    console.error('[Context] Failed to fetch context.md:', error);
+    return c.json({ error: 'Failed to fetch context.md' }, 500);
+  }
+});
+
+// ============================================================
+// Billing endpoints
+// ============================================================
+
+// Get billing overview
+app.get('/teams/:id/billing', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required to view billing' }, 403);
+  }
+
+  // Get billing info from Stripe if customer exists
+  let subscription = null;
+  let nextInvoice = null;
+
+  if (membership.stripeCustomerId && membership.stripeSubscriptionId) {
+    try {
+      const subResponse = await fetch(`https://api.stripe.com/v1/subscriptions/${membership.stripeSubscriptionId}`, {
+        headers: {
+          'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+        },
+      });
+
+      if (subResponse.ok) {
+        const sub = await subResponse.json() as {
+          status: string;
+          current_period_end: number;
+          current_period_start: number;
+          items: { data: Array<{ quantity: number; price: { unit_amount: number } }> };
+        };
+
+        subscription = {
+          status: sub.status,
+          currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
+          currentPeriodStart: new Date(sub.current_period_start * 1000).toISOString(),
+          seats: sub.items.data[0]?.quantity || membership.seats,
+          pricePerSeat: (sub.items.data[0]?.price?.unit_amount || 0) / 100,
+        };
+      }
+
+      // Get upcoming invoice
+      const invoiceResponse = await fetch(`https://api.stripe.com/v1/invoices/upcoming?customer=${membership.stripeCustomerId}`, {
+        headers: {
+          'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+        },
+      });
+
+      if (invoiceResponse.ok) {
+        const invoice = await invoiceResponse.json() as {
+          amount_due: number;
+          period_end: number;
+        };
+        nextInvoice = {
+          amount: invoice.amount_due / 100,
+          date: new Date(invoice.period_end * 1000).toISOString(),
+        };
+      }
+    } catch (err) {
+      console.error('[Billing] Failed to fetch Stripe data:', err);
+    }
+  }
+
+  return c.json({
+    billing: {
+      plan: membership.tier,
+      seats: membership.seats,
+      subscriptionStatus: membership.subscriptionStatus || 'none',
+      hasPaymentMethod: !!membership.stripeCustomerId,
+      subscription,
+      nextInvoice,
+    },
+  });
+});
+
+// List invoices from Stripe
+app.get('/teams/:id/billing/invoices', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required to view invoices' }, 403);
+  }
+
+  if (!membership.stripeCustomerId) {
+    return c.json({ invoices: [] });
+  }
+
+  try {
+    const response = await fetch(`https://api.stripe.com/v1/invoices?customer=${membership.stripeCustomerId}&limit=24`, {
+      headers: {
+        'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch invoices');
+    }
+
+    const data = await response.json() as {
+      data: Array<{
+        id: string;
+        status: string;
+        amount_due: number;
+        amount_paid: number;
+        created: number;
+        invoice_pdf: string | null;
+        hosted_invoice_url: string | null;
+      }>;
+    };
+
+    return c.json({
+      invoices: data.data.map(inv => ({
+        id: inv.id,
+        status: inv.status,
+        amountDue: inv.amount_due / 100,
+        amountPaid: inv.amount_paid / 100,
+        createdAt: new Date(inv.created * 1000).toISOString(),
+        pdfUrl: inv.invoice_pdf,
+        hostedUrl: inv.hosted_invoice_url,
+      })),
+    });
+  } catch (err) {
+    console.error('[Billing] Failed to fetch invoices:', err);
+    return c.json({ error: 'Failed to fetch invoices' }, 500);
+  }
+});
+
+// ============================================================
+// Enterprise BYOK (Bring Your Own Key) endpoints
+// ============================================================
+
+// Check if LLM key is configured
+app.get('/teams/:id/llm-key', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (membership.tier !== 'enterprise') {
+    return c.json({
+      available: false,
+      message: 'BYOK is only available on the Enterprise plan',
+    });
+  }
+
+  const llmKey = await c.env.DB.prepare(`
+    SELECT id, provider, created_at, last_used_at FROM llm_keys WHERE team_id = ?
+  `).bind(teamId).first<{
+    id: string;
+    provider: string;
+    created_at: string;
+    last_used_at: string | null;
+  }>();
+
+  return c.json({
+    available: true,
+    configured: !!llmKey,
+    provider: llmKey?.provider,
+    createdAt: llmKey?.created_at,
+    lastUsedAt: llmKey?.last_used_at,
+  });
+});
+
+// Add or update LLM API key
+app.post('/teams/:id/llm-key', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  if (membership.tier !== 'enterprise') {
+    return c.json({ error: 'BYOK is only available on the Enterprise plan' }, 403);
+  }
+
+  const body = await c.req.json<{
+    provider: string;
+    apiKey: string;
+  }>();
+
+  if (!body.provider || !['openai', 'anthropic', 'google'].includes(body.provider)) {
+    return c.json({ error: 'Invalid provider. Must be openai, anthropic, or google.' }, 400);
+  }
+
+  if (!body.apiKey || body.apiKey.length < 10) {
+    return c.json({ error: 'Invalid API key' }, 400);
+  }
+
+  // Get team encryption key for encrypting the LLM key
+  const teamKey = await c.env.DB.prepare(`
+    SELECT encryption_key FROM team_keys WHERE team_id = ?
+  `).bind(teamId).first<{ encryption_key: string }>();
+
+  if (!teamKey) {
+    return c.json({ error: 'Team encryption key not found' }, 500);
+  }
+
+  // Encrypt the API key
+  const encryptedKey = await encryptContent(body.apiKey, teamKey.encryption_key);
+
+  const now = new Date().toISOString();
+
+  // Upsert the LLM key
+  const existing = await c.env.DB.prepare(`
+    SELECT id FROM llm_keys WHERE team_id = ?
+  `).bind(teamId).first();
+
+  if (existing) {
+    await c.env.DB.prepare(`
+      UPDATE llm_keys SET provider = ?, encrypted_key = ?, updated_at = ? WHERE team_id = ?
+    `).bind(body.provider, encryptedKey, now, teamId).run();
+  } else {
+    const keyId = generateId();
+    await c.env.DB.prepare(`
+      INSERT INTO llm_keys (id, team_id, provider, encrypted_key, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(keyId, teamId, body.provider, encryptedKey, now).run();
+  }
+
+  return c.json({
+    success: true,
+    provider: body.provider,
+    message: 'LLM API key configured successfully',
+  });
+});
+
+// Remove LLM key
+app.delete('/teams/:id/llm-key', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  await c.env.DB.prepare(`
+    DELETE FROM llm_keys WHERE team_id = ?
+  `).bind(teamId).run();
+
+  return c.json({
+    success: true,
+    message: 'LLM API key removed',
+  });
+});
+
+// Test LLM key validity
+app.post('/teams/:id/llm-key/test', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const teamId = c.req.param('id');
+  const membership = await getUserTeamMembership(c.env.DB, user.id, teamId);
+
+  if (!membership) {
+    return c.json({ error: 'Team not found or access denied' }, 404);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin or owner role required' }, 403);
+  }
+
+  if (membership.tier !== 'enterprise') {
+    return c.json({ error: 'BYOK is only available on the Enterprise plan' }, 403);
+  }
+
+  // Get the LLM key
+  const llmKey = await c.env.DB.prepare(`
+    SELECT provider, encrypted_key FROM llm_keys WHERE team_id = ?
+  `).bind(teamId).first<{ provider: string; encrypted_key: string }>();
+
+  if (!llmKey) {
+    return c.json({ error: 'No LLM key configured' }, 404);
+  }
+
+  // Get team encryption key
+  const teamKey = await c.env.DB.prepare(`
+    SELECT encryption_key FROM team_keys WHERE team_id = ?
+  `).bind(teamId).first<{ encryption_key: string }>();
+
+  if (!teamKey) {
+    return c.json({ error: 'Team encryption key not found' }, 500);
+  }
+
+  // Decrypt the API key
+  let apiKey: string;
+  try {
+    apiKey = await decryptContent(llmKey.encrypted_key, teamKey.encryption_key);
+  } catch {
+    return c.json({ error: 'Failed to decrypt API key' }, 500);
+  }
+
+  // Test the key by making a simple API call
+  try {
+    let testResult = false;
+    let message = '';
+
+    if (llmKey.provider === 'openai') {
+      const response = await fetch('https://api.openai.com/v1/models', {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+      testResult = response.ok;
+      message = response.ok ? 'OpenAI key is valid' : 'OpenAI key is invalid';
+    } else if (llmKey.provider === 'anthropic') {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+      testResult = response.ok || response.status === 400; // 400 is OK, means key works but request is minimal
+      message = testResult ? 'Anthropic key is valid' : 'Anthropic key is invalid';
+    } else if (llmKey.provider === 'google') {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      testResult = response.ok;
+      message = response.ok ? 'Google key is valid' : 'Google key is invalid';
+    }
+
+    // Update last_used_at if test succeeded
+    if (testResult) {
+      await c.env.DB.prepare(`
+        UPDATE llm_keys SET last_used_at = ? WHERE team_id = ?
+      `).bind(new Date().toISOString(), teamId).run();
+    }
+
+    return c.json({
+      valid: testResult,
+      provider: llmKey.provider,
+      message,
+    });
+  } catch (err) {
+    console.error('[LLM Key Test] Error:', err);
+    return c.json({
+      valid: false,
+      provider: llmKey.provider,
+      message: 'Failed to test API key',
+    });
+  }
+});
+
+// Helper: Decrypt content with AES-256-GCM
+async function decryptContent(encrypted: string, keyBase64: string): Promise<string> {
+  // Format: RECALL_ENCRYPTED:v1:iv:ciphertext
+  const parts = encrypted.split(':');
+  if (parts.length !== 4 || parts[0] !== 'RECALL_ENCRYPTED') {
+    throw new Error('Invalid encrypted format');
+  }
+
+  const ivB64 = parts[2];
+  const cipherB64 = parts[3];
+
+  const key = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
+  const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+  const ciphertext = Uint8Array.from(atob(cipherB64), c => c.charCodeAt(0));
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    key,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    ciphertext
+  );
+
+  const decoder = new TextDecoder();
+  return decoder.decode(decrypted);
+}
+
+// ============================================================
 // Memory Access Tracking
 // ============================================================
 
@@ -2670,12 +3944,11 @@ const SMALL_SUMMARY_PROMPT = `You are a technical writer creating concise team c
 
 Your output will be read by an AI at the start of every coding session to give it instant context about the project.
 
-Create a small.md file (~500 tokens max) with this structure:
+Create a context.md file (~1.5-3k tokens max) with this structure:
 
 # [Project Name] - Team Context
 
 Sessions: [count] | Last: [date]
-Tokens: small ~[X] | medium ~[X] | large ~[X]
 
 ## What It Is
 [One paragraph: what this project does, core value prop]
@@ -2699,7 +3972,7 @@ Tokens: small ~[X] | medium ~[X] | large ~[X]
 - **[path]** - [what it does]
 
 ---
-*medium.md = session history | large.md = full transcripts*
+*history.md = session history | sessions/ = full transcripts*
 
 RULES:
 - Be SPECIFIC. Names, paths, versions, not vague descriptions.
@@ -2711,7 +3984,7 @@ const MEDIUM_SUMMARY_PROMPT = `You are a technical writer creating session histo
 
 Your output captures the development journey so AI can understand what happened and avoid repeating mistakes.
 
-Create a medium.md file (~4k tokens) with this structure:
+Create a history.md file (~30k tokens max) with this structure:
 
 # [Project Name] - Development History
 
@@ -2741,7 +4014,7 @@ Sessions: [count] | Updated: [date]
 [Repeat for each session, most recent first]
 
 ---
-*See large.md for complete chat transcripts*
+*See sessions/ folder for complete chat transcripts*
 
 RULES:
 - Group by session, most recent first

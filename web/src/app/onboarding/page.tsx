@@ -79,10 +79,12 @@ function OnboardingContent() {
         window.history.replaceState({}, '', '/onboarding');
         if (!success) {
           console.error('Failed to exchange auth code');
+          // CRITICAL FIX: Redirect to home on auth failure instead of leaving user stranded
+          router.push('/');
         }
       });
     }
-  }, [searchParams, loginWithCode]);
+  }, [searchParams, loginWithCode, router]);
 
   // Check if user needs onboarding
   useEffect(() => {
@@ -103,7 +105,7 @@ function OnboardingContent() {
       if (user.team) {
         // If onboarding is already completed, go to dashboard
         if (user.onboardingCompleted) {
-          router.push('/dashboard');
+          router.push('/app');
           return;
         }
         // Otherwise show simplified profile for invited member
@@ -178,7 +180,7 @@ function OnboardingContent() {
       await refresh();
 
       // Go to dashboard
-      router.push('/dashboard');
+      router.push('/app');
     } catch (error) {
       console.error('Failed to complete onboarding:', error);
     } finally {
@@ -334,7 +336,7 @@ function OnboardingContent() {
       await refresh();
 
       // Redirect to dashboard with refresh param to ensure repos load
-      router.push('/dashboard?refresh=1');
+      router.push('/app?refresh=1');
     } catch (error) {
       console.error('Failed to complete onboarding:', error);
     } finally {
@@ -592,7 +594,7 @@ function OnboardingContent() {
                     )}
                   </div>
                   <div className="mb-4">
-                    <span className="text-3xl font-bold text-text-primary">$10</span>
+                    <span className="text-3xl font-bold text-text-primary">$12</span>
                     <span className="text-text-tertiary">/seat/month</span>
                   </div>
                   <ul className="space-y-2 text-sm text-text-secondary">
@@ -600,25 +602,25 @@ function OnboardingContent() {
                       <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      Unlimited repositories
+                      Unlimited repos
                     </li>
                     <li className="flex items-center gap-2">
                       <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      1 year of history
+                      Unlimited sessions
                     </li>
                     <li className="flex items-center gap-2">
                       <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      Team analytics
+                      AI-powered summaries
                     </li>
                     <li className="flex items-center gap-2">
                       <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      Priority support
+                      Encrypted sharing
                     </li>
                   </ul>
                 </button>
@@ -657,19 +659,19 @@ function OnboardingContent() {
                       <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
+                      Bring Your Own LLM Key
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Code never touches our servers
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
                       SSO / SAML
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      BYOK (your own LLM)
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      SLA & dedicated support
                     </li>
                   </ul>
                 </button>
@@ -701,7 +703,7 @@ function OnboardingContent() {
                   </button>
                   <div className="ml-auto text-right">
                     <div className="text-2xl font-bold text-text-primary">
-                      ${selectedPlan === 'team' ? seats * 10 : seats * 30}/mo
+                      ${selectedPlan === 'team' ? seats * 12 : seats * 30}/mo
                     </div>
                     <div className="text-sm text-text-tertiary">
                       after 14-day trial
@@ -719,9 +721,17 @@ function OnboardingContent() {
                 </button>
                 <button
                   onClick={handlePlanSubmit}
-                  className="flex-1 bg-text-primary text-bg-base py-4 rounded-lg font-semibold text-lg hover:translate-y-[-1px] hover:shadow-lg transition-all"
+                  disabled={saving}
+                  className="flex-1 bg-text-primary text-bg-base py-4 rounded-lg font-semibold text-lg hover:translate-y-[-1px] hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
-                  Continue to Repos
+                  {saving ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-bg-base border-t-transparent rounded-full animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    'Continue to Payment'
+                  )}
                 </button>
               </div>
             </motion.div>

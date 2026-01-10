@@ -11,7 +11,7 @@ import {
   RECALL_DIR,
   EVENTS_FILE,
   MANIFEST_FILE,
-  SNAPSHOTS
+  FILES
 } from './types.js';
 
 export function findRepoRoot(startPath: string = process.cwd()): string | null {
@@ -29,6 +29,9 @@ export function getRecallPath(repoRoot: string): string {
   return join(repoRoot, RECALL_DIR);
 }
 
+// Alias for backwards compatibility
+export const getRecallDir = getRecallPath;
+
 export function isRecallInitialized(repoRoot: string): boolean {
   const recallPath = getRecallPath(repoRoot);
   return existsSync(join(recallPath, MANIFEST_FILE));
@@ -39,7 +42,7 @@ export function initRecallDir(repoRoot: string): void {
 
   // Create directory structure
   mkdirSync(join(recallPath, 'events'), { recursive: true });
-  mkdirSync(join(recallPath, 'snapshots'), { recursive: true });
+  mkdirSync(join(recallPath, FILES.sessions), { recursive: true });
 
   // Create manifest
   const manifest: Manifest = {
@@ -54,31 +57,26 @@ export function initRecallDir(repoRoot: string): void {
   // Create empty events file
   writeFileSync(join(recallPath, EVENTS_FILE), '');
 
-  // Create initial snapshots
-  const initialContent = `# Team Context
+  // Create initial context.md (team brain)
+  const contextContent = `# Team Context
 
 _No sessions captured yet. Run \`recall save\` after your first AI coding session._
 `;
-  writeFileSync(join(recallPath, SNAPSHOTS.small), initialContent);
-  writeFileSync(join(recallPath, SNAPSHOTS.medium), initialContent);
-  writeFileSync(join(recallPath, SNAPSHOTS.large), initialContent);
+  writeFileSync(join(recallPath, FILES.context), contextContent);
 
-  // Create .recallignore
-  const ignoreContent = `# Patterns to exclude from context extraction
-*.env
-*secret*
-*password*
-*token*
-*credential*
-*.pem
-*.key
+  // Create initial history.md (encyclopedia)
+  const historyContent = `# Team History
+
+_No sessions captured yet. This will contain decision logs, failure logs, and prompt patterns._
 `;
-  writeFileSync(join(recallPath, '.recallignore'), ignoreContent);
+  writeFileSync(join(recallPath, FILES.history), historyContent);
 
   // Create .gitattributes for merge strategy
   const gitattributes = `# Recall merge strategy
 events/events.jsonl merge=union
-snapshots/*.md merge=ours
+context.md merge=ours
+history.md merge=ours
+sessions/**/*.md merge=ours
 manifest.json merge=ours
 `;
   writeFileSync(join(recallPath, '.gitattributes'), gitattributes);
@@ -115,18 +113,31 @@ export function readManifest(repoRoot: string): Manifest | null {
 
 export function writeSnapshot(
   repoRoot: string,
-  type: 'small' | 'medium' | 'large',
+  type: 'context' | 'history',
   content: string
 ): void {
-  const snapshotPath = join(getRecallPath(repoRoot), SNAPSHOTS[type]);
-  writeFileSync(snapshotPath, content);
+  const filePath = join(getRecallPath(repoRoot), FILES[type]);
+  writeFileSync(filePath, content);
 }
 
 export function readSnapshot(
   repoRoot: string,
-  type: 'small' | 'medium' | 'large'
+  type: 'context' | 'history'
 ): string {
-  const snapshotPath = join(getRecallPath(repoRoot), SNAPSHOTS[type]);
-  if (!existsSync(snapshotPath)) return '';
-  return readFileSync(snapshotPath, 'utf-8');
+  const filePath = join(getRecallPath(repoRoot), FILES[type]);
+  if (!existsSync(filePath)) return '';
+  return readFileSync(filePath, 'utf-8');
+}
+
+export function writeSessionFile(
+  repoRoot: string,
+  sessionPath: string,
+  content: string
+): void {
+  const fullPath = join(getRecallPath(repoRoot), sessionPath);
+  const dir = dirname(fullPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(fullPath, content);
 }

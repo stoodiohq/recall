@@ -26,9 +26,9 @@ export interface RecallConfig {
   cloudEndpoint: string;
   apiToken?: string;
   tokenBudgets: {
-    small: number;
-    medium: number;
-    large: number;
+    context: number;  // ~1.5-3K tokens
+    history: number;  // ~30K+ tokens
+    session: number;  // ~1.5K per session
   };
   autoSave: boolean;
   syncOnPush: boolean;
@@ -49,17 +49,17 @@ export interface Extractor {
 }
 
 export interface SnapshotConfig {
-  small: number;   // ~500 tokens
-  medium: number;  // ~4000 tokens
-  large: number;   // ~32000 tokens
+  context: number;   // ~1.5-3K tokens
+  history: number;   // ~30K+ tokens
+  session: number;   // ~1.5K per session
 }
 
 export const DEFAULT_CONFIG: RecallConfig = {
   cloudEndpoint: 'https://api.recall.team',
   tokenBudgets: {
-    small: 500,
-    medium: 4000,
-    large: 32000,
+    context: 3000,
+    history: 30000,
+    session: 1500,
   },
   autoSave: true,
   syncOnPush: true,
@@ -68,8 +68,8 @@ export const DEFAULT_CONFIG: RecallConfig = {
 export const RECALL_DIR = '.recall';
 export const EVENTS_FILE = 'events/events.jsonl';
 export const MANIFEST_FILE = 'manifest.json';
-export const SNAPSHOTS = {
-  small: 'snapshots/small.md',
-  medium: 'snapshots/medium.md',
-  large: 'snapshots/large.md',
+export const FILES = {
+  context: 'context.md',
+  history: 'history.md',
+  sessions: 'sessions',  // folder
 } as const;

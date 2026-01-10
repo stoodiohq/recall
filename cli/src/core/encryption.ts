@@ -222,9 +222,10 @@ export async function decryptFile(
 }
 
 /**
- * Encrypt all snapshot files in .recall directory
+ * Encrypt all memory files in .recall directory
+ * context.md, history.md, and all files in sessions/
  */
-export async function encryptSnapshots(recallDir: string): Promise<{
+export async function encryptMemoryFiles(recallDir: string): Promise<{
   success: boolean;
   encrypted: string[];
   error?: string;
@@ -238,31 +239,47 @@ export async function encryptSnapshots(recallDir: string): Promise<{
     };
   }
 
-  const snapshotDir = path.join(recallDir, 'snapshots');
   const encrypted: string[] = [];
 
-  const files = ['small.md', 'medium.md', 'large.md'];
-  for (const file of files) {
-    const filePath = path.join(snapshotDir, file);
+  // Encrypt context.md and history.md
+  const mainFiles = ['context.md', 'history.md'];
+  for (const file of mainFiles) {
+    const filePath = path.join(recallDir, file);
     if (fs.existsSync(filePath)) {
       const encPath = await encryptFile(filePath, key);
       encrypted.push(encPath);
     }
   }
 
+  // Encrypt all session files in sessions/ folder
+  const sessionsDir = path.join(recallDir, 'sessions');
+  if (fs.existsSync(sessionsDir)) {
+    const walkDir = (dir: string) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkDir(fullPath);
+        } else if (entry.name.endsWith('.md') && !entry.name.endsWith('.enc')) {
+          encryptFile(fullPath, key).then(encPath => encrypted.push(encPath));
+        }
+      }
+    };
+    walkDir(sessionsDir);
+  }
+
   return { success: true, encrypted };
 }
 
 /**
- * Decrypt all snapshot files in .recall directory
- * Returns decrypted content without writing to disk (for loading into context)
+ * Decrypt memory files in .recall directory
+ * Returns decrypted content for context.md and history.md
  */
-export async function decryptSnapshots(recallDir: string): Promise<{
+export async function decryptMemoryFiles(recallDir: string): Promise<{
   success: boolean;
-  snapshots: {
-    small?: string;
-    medium?: string;
-    large?: string;
+  files: {
+    context?: string;
+    history?: string;
   };
   error?: string;
 }> {
@@ -270,42 +287,38 @@ export async function decryptSnapshots(recallDir: string): Promise<{
   if (!key) {
     return {
       success: false,
-      snapshots: {},
+      files: {},
       error: 'No encryption key available. Contact your team admin for a Recall seat.',
     };
   }
 
-  const snapshotDir = path.join(recallDir, 'snapshots');
-  const snapshots: { small?: string; medium?: string; large?: string } = {};
+  const files: { context?: string; history?: string } = {};
 
-  const files: Array<{ name: 'small' | 'medium' | 'large'; file: string }> = [
-    { name: 'small', file: 'small.md.enc' },
-    { name: 'medium', file: 'medium.md.enc' },
-    { name: 'large', file: 'large.md.enc' },
+  const mainFiles: Array<{ name: 'context' | 'history'; file: string }> = [
+    { name: 'context', file: 'context.md.enc' },
+    { name: 'history', file: 'history.md.enc' },
   ];
 
-  for (const { name, file } of files) {
-    const filePath = path.join(snapshotDir, file);
+  for (const { name, file } of mainFiles) {
+    const filePath = path.join(recallDir, file);
     if (fs.existsSync(filePath)) {
       try {
         const encrypted = fs.readFileSync(filePath, 'utf8');
-        snapshots[name] = decrypt(encrypted, key);
+        files[name] = decrypt(encrypted, key);
       } catch (error) {
-        // Decryption failed - possibly key rotated
         console.error(`Failed to decrypt ${file}:`, error);
       }
     }
   }
 
-  return { success: Object.keys(snapshots).length > 0, snapshots };
+  return { success: Object.keys(files).length > 0, files };
 }
 
 /**
- * Check if snapshots are encrypted
+ * Check if memory files are encrypted
  */
-export function hasEncryptedSnapshots(recallDir: string): boolean {
-  const snapshotDir = path.join(recallDir, 'snapshots');
-  return fs.existsSync(path.join(snapshotDir, 'small.md.enc'));
+export function hasEncryptedMemoryFiles(recallDir: string): boolean {
+  return fs.existsSync(path.join(recallDir, 'context.md.enc'));
 }
 
 /**

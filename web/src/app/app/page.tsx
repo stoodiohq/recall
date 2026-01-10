@@ -113,7 +113,7 @@ function ReposStep({
       <div className="space-y-4">
         <p className="text-text-secondary">Connect your GitHub repositories so Recall can build team memory from your codebase.</p>
         <a
-          href="/dashboard/repos"
+          href="/app/repos"
           className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition-opacity"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -129,7 +129,7 @@ function ReposStep({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-green-400 font-medium">{repos.length} {repos.length === 1 ? 'repository' : 'repositories'} connected</p>
-        <a href="/dashboard/repos" className="text-sm text-cyan-400 hover:underline">Manage repos</a>
+        <a href="/app/repos" className="text-sm text-cyan-400 hover:underline">Manage repos</a>
       </div>
       <div className="space-y-2 max-h-48 overflow-y-auto">
         {repos.map((repo) => (
@@ -257,6 +257,8 @@ function InstallSection() {
   const [existingTokens, setExistingTokens] = useState<ExistingToken[]>([]);
   const [loading, setLoading] = useState(false);
   const [generatingToken, setGeneratingToken] = useState(false);
+  const [revokingTokenId, setRevokingTokenId] = useState<string | null>(null);
+  const [showTokenList, setShowTokenList] = useState(false);
 
   const handleExpand = async () => {
     // On first expand, check for existing tokens
@@ -297,11 +299,40 @@ function InstallSection() {
       if (response.ok) {
         const data = await response.json();
         setApiToken(data.token);
+        // Add to existing tokens list
+        setExistingTokens(prev => [{
+          id: data.id || crypto.randomUUID(),
+          name: data.name,
+          createdAt: data.createdAt,
+          lastUsedAt: null,
+        }, ...prev]);
       }
     } catch (err) {
       console.error('Failed to generate token:', err);
     } finally {
       setGeneratingToken(false);
+    }
+  };
+
+  const handleRevokeToken = async (tokenId: string) => {
+    if (!confirm('Revoke this token? Any tool using it will need a new token.')) return;
+
+    setRevokingTokenId(tokenId);
+    try {
+      const token = getToken();
+      const response = await fetch(`${API_URL}/auth/tokens/${tokenId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (response.ok) {
+        setExistingTokens(prev => prev.filter(t => t.id !== tokenId));
+      }
+    } catch (err) {
+      console.error('Failed to revoke token:', err);
+    } finally {
+      setRevokingTokenId(null);
     }
   };
 
@@ -313,6 +344,14 @@ function InstallSection() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Count tokens that have never been used and are older than 7 days
+  const unusedOldTokens = existingTokens.filter(t => {
+    if (t.lastUsedAt) return false;
+    const created = new Date(t.createdAt);
+    const daysSinceCreation = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
+    return daysSinceCreation > 7;
+  });
 
   return (
     <div className="bg-bg-elevated border border-border-subtle rounded-lg overflow-hidden">
@@ -397,13 +436,95 @@ function InstallSection() {
                   The command auto-detects your AI tool and configures Recall. Restart the tool after running.
                 </p>
               </>
-            ) : existingTokens.length > 0 ? (
-              /* User has existing tokens - show info and generate button */
+            ) : (
+              /* Show token management UI */
               <>
-                <p className="text-text-secondary text-sm">
-                  You have {existingTokens.length} existing API token{existingTokens.length > 1 ? 's' : ''}.
-                  Generate a new token to install Recall on another tool.
-                </p>
+                {/* Explanation of what tokens are */}
+                <div className="flex items-start gap-3 p-3 bg-bg-base border border-border-subtle rounded-lg">
+                  <svg className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="text-sm text-text-secondary">
+                    <p><strong className="text-text-primary">What are API tokens?</strong></p>
+                    <p className="mt-1">Each AI tool (Claude Code, Cursor, Windsurf) needs its own token to connect to Recall. Tokens stay active until you revoke them.</p>
+                  </div>
+                </div>
+
+                {/* Token summary with expand option */}
+                {existingTokens.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-text-primary font-medium">{existingTokens.length} API token{existingTokens.length > 1 ? 's' : ''}</span>
+                        {unusedOldTokens.length > 0 && (
+                          <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">
+                            {unusedOldTokens.length} unused
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setShowTokenList(!showTokenList)}
+                        className="text-sm text-cyan-400 hover:underline"
+                      >
+                        {showTokenList ? 'Hide list' : 'Manage tokens'}
+                      </button>
+                    </div>
+
+                    {/* Token list */}
+                    {showTokenList && (
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {existingTokens.map((t) => {
+                          const created = new Date(t.createdAt);
+                          const daysSinceCreation = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
+                          const isOldAndUnused = !t.lastUsedAt && daysSinceCreation > 7;
+
+                          return (
+                            <div
+                              key={t.id}
+                              className={`flex items-center justify-between p-3 rounded-lg border ${
+                                isOldAndUnused
+                                  ? 'bg-amber-500/5 border-amber-500/20'
+                                  : 'bg-bg-base border-border-subtle'
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-text-primary text-sm font-medium">{t.name}</span>
+                                  {isOldAndUnused && (
+                                    <span className="text-xs text-amber-400">Likely unused</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 mt-1 text-xs text-text-tertiary">
+                                  <span>Created {getTimeAgo(t.createdAt)}</span>
+                                  <span>•</span>
+                                  <span>
+                                    {t.lastUsedAt ? `Used ${getTimeAgo(t.lastUsedAt)}` : 'Never used'}
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleRevokeToken(t.id)}
+                                disabled={revokingTokenId === t.id}
+                                className="text-text-tertiary hover:text-red-400 transition-colors p-2 disabled:opacity-50"
+                                title="Revoke token"
+                              >
+                                {revokingTokenId === t.id ? (
+                                  <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Generate button */}
                 <button
                   onClick={handleGenerateToken}
                   disabled={generatingToken}
@@ -420,32 +541,6 @@ function InstallSection() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                       </svg>
                       Generate New Token
-                    </>
-                  )}
-                </button>
-              </>
-            ) : (
-              /* No existing tokens - prompt to generate */
-              <>
-                <p className="text-text-secondary text-sm">
-                  Generate an API token to install Recall on another tool.
-                </p>
-                <button
-                  onClick={handleGenerateToken}
-                  disabled={generatingToken}
-                  className="inline-flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                  {generatingToken ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                      </svg>
-                      Generate API Token
                     </>
                   )}
                 </button>
@@ -753,20 +848,22 @@ function DashboardContent() {
     const code = searchParams.get('code');
     if (code) {
       loginWithCode(code).then((success) => {
-        window.history.replaceState({}, '', '/dashboard');
+        window.history.replaceState({}, '', '/app');
         if (!success) {
           console.error('Failed to exchange auth code');
+          // CRITICAL FIX: Redirect to home on auth failure instead of leaving user stranded
+          router.push('/');
         }
       });
     }
-  }, [searchParams, loginWithCode]);
+  }, [searchParams, loginWithCode, router]);
 
   // Handle refresh param (after returning from repos page or onboarding)
   useEffect(() => {
     const refreshParam = searchParams.get('refresh');
     if (refreshParam) {
       // Clear the param from URL immediately
-      window.history.replaceState({}, '', '/dashboard');
+      window.history.replaceState({}, '', '/app');
     }
   }, [searchParams]);
 
@@ -1056,10 +1153,10 @@ function DashboardContent() {
                   <p className="text-text-tertiary text-xs uppercase tracking-wider">Team</p>
                   {user.team ? (
                     <div className="flex items-center justify-between">
-                      <a href="/dashboard/team" className="text-text-primary hover:text-cyan-400 transition-colors">
+                      <a href="/app/team" className="text-text-primary hover:text-cyan-400 transition-colors">
                         {user.team.name}
                       </a>
-                      <a href="/dashboard/team" className="text-xs text-cyan-400 hover:underline">
+                      <a href="/app/team" className="text-xs text-cyan-400 hover:underline">
                         Manage
                       </a>
                     </div>
@@ -1193,7 +1290,7 @@ function DashboardContent() {
                     {repos.length} {repos.length === 1 ? 'repository' : 'repositories'}
                   </span>
                 </div>
-                <a href="/dashboard/repos" className="text-sm text-cyan-400 hover:underline">Manage</a>
+                <a href="/app/repos" className="text-sm text-cyan-400 hover:underline">Manage</a>
               </div>
               <div className="flex flex-wrap gap-2">
                 {repos.map((repo) => (
@@ -1228,6 +1325,20 @@ function DashboardContent() {
 
             {/* Install on Another Tool */}
             <InstallSection />
+
+            {/* Uninstall Section */}
+            <div className="bg-bg-elevated border border-border-subtle rounded-lg p-5">
+              <h3 className="text-sm font-medium text-text-primary mb-3">Uninstall Recall</h3>
+              <p className="text-text-secondary text-sm mb-4">
+                To completely remove Recall from your system, run this in your terminal:
+              </p>
+              <div className="bg-bg-base border border-border-subtle rounded-lg p-3 font-mono text-xs text-text-secondary overflow-x-auto">
+                <code>rm -rf ~/.recall ~/.npm/_npx && echo "Recall uninstalled"</code>
+              </div>
+              <p className="text-text-tertiary text-xs mt-3">
+                This removes the config and clears cached packages. You'll also need to manually remove the "recall" entry from your MCP config file (~/.claude/mcp.json for Claude Code).
+              </p>
+            </div>
           </div>
         ) : (
           /* Setup In Progress */

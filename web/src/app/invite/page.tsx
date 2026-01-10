@@ -88,7 +88,7 @@ function InviteContent() {
 
       setAccepted(true);
       // Redirect to dashboard after a short delay
-      setTimeout(() => router.push('/dashboard'), 2000);
+      setTimeout(() => router.push('/app'), 2000);
     } catch {
       setError('Failed to accept invite');
     } finally {

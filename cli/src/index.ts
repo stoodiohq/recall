@@ -7,7 +7,7 @@
  */
 
 import { Command } from 'commander';
-import { authCommand, initCommand, loadCommand, saveCommand, setupCommand, statusCommand, syncCommand } from './commands/index.js';
+import { authCommand, initCommand, loadCommand, saveCommand, setupCommand, statusCommand, syncCommand, uninstallCommand } from './commands/index.js';
 import { hookCommand } from './hooks/claude-code.js';
 
 const program = new Command();
@@ -61,6 +61,12 @@ program
   .option('--regenerate', 'Regenerate snapshots after sync')
   .option('--quiet', 'Suppress non-error output')
   .action(syncCommand);
+
+program
+  .command('uninstall')
+  .description('Completely remove Recall from Claude Code')
+  .option('--quiet', 'Suppress output')
+  .action(uninstallCommand);
 
 // Hook commands for AI tool integration
 const hook = program

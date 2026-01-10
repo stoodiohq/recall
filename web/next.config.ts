@@ -1,7 +1,8 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  output: 'export',
+  // Removed 'output: export' to support dynamic routes like /dashboard/repos/[id]
+  // For static hosting, deploy to Vercel or use Cloudflare Workers with SSR
   images: {
     unoptimized: true,
     remotePatterns: [

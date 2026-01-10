@@ -264,7 +264,7 @@ function TeamPageContent() {
       <div className="min-h-screen bg-bg-base flex items-center justify-center">
         <div className="text-center">
           <p className="text-text-secondary">No team found</p>
-          <a href="/dashboard" className="text-cyan-400 hover:underline mt-2 inline-block">Back to dashboard</a>
+          <a href="/app" className="text-cyan-400 hover:underline mt-2 inline-block">Back to dashboard</a>
         </div>
       </div>
     );
@@ -276,11 +276,11 @@ function TeamPageContent() {
       <header className="border-b border-border-subtle">
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <a href="/dashboard" className="font-semibold text-xl text-text-primary">recall</a>
+            <a href="/app" className="font-semibold text-xl text-text-primary">recall</a>
             <span className="text-text-tertiary">/</span>
             <span className="text-text-secondary">Team</span>
           </div>
-          <a href="/dashboard" className="text-text-tertiary hover:text-text-primary transition-colors">
+          <a href="/app" className="text-text-tertiary hover:text-text-primary transition-colors">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
