@@ -1,8 +1,0 @@
-# Patterns to exclude from context extraction
-*.env
-*secret*
-*password*
-*token*
-*credential*
-*.pem
-*.key
