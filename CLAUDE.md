@@ -19,8 +19,8 @@
 ## CRITICAL BUILD RULES
 
 **FOLLOW THE PLANNING DOCS ONLY:**
-- `plan/recall-team-product-plan.md` - Product Bible (What to Build)
-- `plan/recall-team-frontend-plan.md` - Frontend Bible (How It Looks)
+- `planning/recall-team-product-plan.md` - Product Bible (What to Build)
+- `planning/recall-team-frontend-plan.md` - Frontend Bible (How It Looks)
 
 **DO NOT:**
 - Make changes that deviate from the planning docs
@@ -155,10 +155,11 @@ recall.team/
 │   │   ├── /app/settings/billing
 │   │   └── /app/settings/team
 │   └── /app/activity
-└── /blog (Future)
+├── /blog
+├── /changelog
+├── /privacy
+└── /terms
 ```
-
-**Note:** Plan uses `/app` for dashboard routes, current code uses `/dashboard`. These need alignment.
 
 ---
 
@@ -393,7 +394,7 @@ Dashboard → Repos → Enable Repo → Select → Initialize .recall/ → Insta
 - Framer Motion
 - Deployed to Cloudflare Pages
 
-**API** (`/cloud`)
+**API** (`/api`)
 - Cloudflare Workers + Hono
 - D1 database (SQLite at edge)
 - GitHub OAuth
@@ -415,17 +416,17 @@ Dashboard → Repos → Enable Repo → Select → Initialize .recall/ → Insta
 
 **API:**
 ```bash
-cd cloud && npx wrangler deploy
+cd api && npx wrangler deploy
 ```
 
 **Database Migrations:**
 ```bash
-cd cloud && npx wrangler d1 execute recall-db --remote --file=migrations/XXXX.sql
+cd api && npx wrangler d1 execute recall-db --remote --file=migrations/XXXX.sql
 ```
 
 **Frontend:**
 ```bash
-cd web && npm run build && npx wrangler pages deploy .next --project-name=recall-web
+cd web && npm run build && npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static --project-name=recall-web
 ```
 
 **MCP (npm):**
