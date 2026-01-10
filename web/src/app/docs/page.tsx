@@ -122,14 +122,10 @@ After initialization, your repo will have:
 .recall/
 ├── context.md      # Team brain (encrypted)
 ├── history.md      # Session history (encrypted)
-├── sessions/       # Individual sessions
-│   └── 2025-01/
-│       └── ray/
-│           └── 15-1430.md
-├── events/
-│   └── events.jsonl
-├── manifest.json
-└── README.md
+└── sessions/       # Individual sessions
+    └── 2025-01/
+        └── ray/
+            └── 15-1430.md
 \`\`\`
 
 ## Encryption

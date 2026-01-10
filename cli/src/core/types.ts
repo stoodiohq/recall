@@ -16,11 +16,6 @@ export interface RecallEvent {
   files?: string[];    // Files touched
 }
 
-export interface Manifest {
-  version: number;
-  created: string;     // ISO8601
-  team?: string;       // Team ID if connected to cloud
-}
 
 export interface RecallConfig {
   cloudEndpoint: string;
@@ -66,8 +61,6 @@ export const DEFAULT_CONFIG: RecallConfig = {
 };
 
 export const RECALL_DIR = '.recall';
-export const EVENTS_FILE = 'events/events.jsonl';
-export const MANIFEST_FILE = 'manifest.json';
 export const FILES = {
   context: 'context.md',
   history: 'history.md',

@@ -29,7 +29,6 @@ export async function initCommand(): Promise<void> {
   initRecallDir(repoRoot);
 
   console.log(chalk.green('✓ Created .recall/ directory'));
-  console.log(chalk.green('✓ Created events.jsonl'));
   console.log(chalk.green('✓ Created context.md (team brain)'));
   console.log(chalk.green('✓ Created history.md (encyclopedia)'));
   console.log(chalk.green('✓ Created sessions/ folder'));

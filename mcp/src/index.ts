@@ -1837,7 +1837,7 @@ server.registerTool('recall_get_context', {
 // Tool: recall_get_history - "remember" hotword: context.md + recent sessions
 // Per Part 7: Returns context.md + recent sessions (last 5-10 from sessions/ folder)
 server.registerTool('recall_get_history', {
-  description: 'Get detailed session history (medium.md). This includes more context than recall_get_context but uses more tokens.',
+  description: 'Get detailed session history (context.md + recent sessions). This includes more context than recall_get_context but uses more tokens.',
   inputSchema: z.object({
     projectPath: z.string().optional().describe('Path to the project root. REQUIRED to ensure correct repo context. Use the absolute path to the project you are working in.'),
   }).shape,
@@ -1940,7 +1940,7 @@ server.registerTool('recall_get_history', {
 // Tool: recall_get_transcripts - "ultraremember" hotword: context.md + history.md
 // Per Part 7: Returns context.md + history.md (full encyclopedia for onboarding)
 server.registerTool('recall_get_transcripts', {
-  description: 'Get full session transcripts (large.md). WARNING: This can be very large and use many tokens. Only use when you need complete historical details.',
+  description: 'Get full session transcripts (context.md + history.md). WARNING: This can be very large and use many tokens. Only use when you need complete historical details.',
   inputSchema: z.object({
     projectPath: z.string().optional().describe('Path to the project root. REQUIRED to ensure correct repo context. Use the absolute path to the project you are working in.'),
   }).shape,
