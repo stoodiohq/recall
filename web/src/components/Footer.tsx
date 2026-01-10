@@ -1,22 +1,22 @@
 export function Footer() {
   const links = {
     Product: [
-      { name: 'Features', href: '#' },
-      { name: 'Pricing', href: '#pricing' },
-      { name: 'Changelog', href: '#' },
+      { name: 'Features', href: '/#features' },
+      { name: 'Pricing', href: '/pricing' },
+      { name: 'Changelog', href: '/changelog' },
     ],
     Resources: [
-      { name: 'Docs', href: '#' },
-      { name: 'Blog', href: '#' },
+      { name: 'Docs', href: '/docs' },
+      { name: 'Blog', href: '/blog' },
       { name: 'GitHub', href: 'https://github.com/recall-team/recall' },
     ],
     Company: [
-      { name: 'About', href: '#' },
+      { name: 'About', href: '/blog/introducing-recall' },
       { name: 'Contact', href: 'mailto:hello@recall.team' },
     ],
     Legal: [
-      { name: 'Privacy', href: '#' },
-      { name: 'Terms', href: '#' },
+      { name: 'Privacy', href: '/privacy' },
+      { name: 'Terms', href: '/terms' },
     ],
   };
 
