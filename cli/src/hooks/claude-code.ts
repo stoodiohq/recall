@@ -1,29 +1,21 @@
 /**
  * Claude Code Hooks for Recall
  *
- * These hooks integrate Recall with Claude Code:
- * - Session start: Load context from .recall/
- * - Session end: Save new sessions to .recall/
+ * These hooks integrate Recall with Claude Code for automatic session saving:
+ *
+ * 1. Stop hook - Auto-save when session ends
+ * 2. PostToolUse hook - Auto-save after git commit/push
+ * 3. UserPromptSubmit hook - Save when user types "save", "let's save", etc.
  *
  * To install:
- *   recall hooks install
+ *   recall hook install
  *
- * Or manually add to ~/.claude/settings.json:
+ * This adds to ~/.claude/settings.json:
  * {
  *   "hooks": {
- *     "PreToolUse": [
- *       {
- *         "matcher": ".*",
- *         "commands": ["recall hook context"]
- *       }
- *     ],
- *     "PostToolUse": [],
- *     "SessionEnd": [
- *       {
- *         "matcher": ".*",
- *         "commands": ["recall hook save --auto"]
- *       }
- *     ]
+ *     "Stop": [{ "hooks": [{ "type": "command", "command": "recall hook save --auto --quiet" }] }],
+ *     "PostToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "recall hook on-commit" }] }],
+ *     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "recall hook on-prompt" }] }]
  *   }
  * }
  */
@@ -42,13 +34,20 @@ interface ClaudeSettings {
     PostToolUse?: HookConfig[];
     SessionEnd?: HookConfig[];
     SessionStart?: HookConfig[];
+    Stop?: HookConfig[];
+    UserPromptSubmit?: HookConfig[];
   };
   [key: string]: unknown;
 }
 
+interface HookEntry {
+  type: 'command';
+  command: string;
+}
+
 interface HookConfig {
-  matcher: string;
-  commands: string[];
+  matcher?: string;
+  hooks: HookEntry[];
 }
 
 const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -87,11 +86,21 @@ export function hooksInstalled(): boolean {
 
   try {
     const settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf8')) as ClaudeSettings;
-    const sessionEnd = settings.hooks?.SessionEnd || [];
 
-    return sessionEnd.some(hook =>
-      hook.commands.some(cmd => cmd.includes(RECALL_HOOK_MARKER))
+    // Check Stop hook (session end)
+    const stop = settings.hooks?.Stop || [];
+    const hasStopHook = stop.some(hook =>
+      hook.hooks?.some(h => h.command?.includes(RECALL_HOOK_MARKER))
     );
+
+    // Check PostToolUse hook (git commit)
+    const postToolUse = settings.hooks?.PostToolUse || [];
+    const hasGitCommitHook = postToolUse.some(hook =>
+      hook.matcher === 'Bash' &&
+      hook.hooks?.some(h => h.command?.includes(RECALL_HOOK_MARKER))
+    );
+
+    return hasStopHook || hasGitCommitHook;
   } catch {
     return false;
   }
@@ -130,33 +139,83 @@ export function installHooks(): { success: boolean; message: string } {
     settings.hooks = {};
   }
 
-  // Add SessionEnd hook for auto-save
-  const sessionEndHook: HookConfig = {
-    matcher: '.*',
-    commands: ['recall hook save --auto --quiet'],
+  let installed = false;
+
+  // 1. Stop hook - auto-save when session ends
+  const stopHook: HookConfig = {
+    hooks: [
+      {
+        type: 'command',
+        command: 'recall hook save --auto --quiet',
+      },
+    ],
   };
 
-  // Check if already installed
-  const existingSessionEnd = settings.hooks.SessionEnd || [];
-  const alreadyInstalled = existingSessionEnd.some(hook =>
-    hook.commands.some(cmd => cmd.includes(RECALL_HOOK_MARKER))
+  const existingStop = settings.hooks.Stop || [];
+  const hasStopHook = existingStop.some(hook =>
+    hook.hooks?.some(h => h.command?.includes(RECALL_HOOK_MARKER))
   );
 
-  if (alreadyInstalled) {
+  if (!hasStopHook) {
+    settings.hooks.Stop = [...existingStop, stopHook];
+    installed = true;
+  }
+
+  // 2. PostToolUse hook - auto-save after git commit
+  const gitCommitHook: HookConfig = {
+    matcher: 'Bash',
+    hooks: [
+      {
+        type: 'command',
+        command: 'recall hook on-commit',
+      },
+    ],
+  };
+
+  const existingPostToolUse = settings.hooks.PostToolUse || [];
+  const hasGitCommitHook = existingPostToolUse.some(hook =>
+    hook.matcher === 'Bash' &&
+    hook.hooks?.some(h => h.command?.includes('recall hook'))
+  );
+
+  if (!hasGitCommitHook) {
+    settings.hooks.PostToolUse = [...existingPostToolUse, gitCommitHook];
+    installed = true;
+  }
+
+  // 3. UserPromptSubmit hook - detect "save" keyword
+  const saveKeywordHook: HookConfig = {
+    hooks: [
+      {
+        type: 'command',
+        command: 'recall hook on-prompt',
+      },
+    ],
+  };
+
+  const existingPromptSubmit = settings.hooks.UserPromptSubmit || [];
+  const hasSaveKeywordHook = existingPromptSubmit.some(hook =>
+    hook.hooks?.some(h => h.command?.includes('recall hook'))
+  );
+
+  if (!hasSaveKeywordHook) {
+    settings.hooks.UserPromptSubmit = [...existingPromptSubmit, saveKeywordHook];
+    installed = true;
+  }
+
+  if (!installed) {
     return {
       success: true,
       message: 'Recall hooks already installed.',
     };
   }
 
-  settings.hooks.SessionEnd = [...existingSessionEnd, sessionEndHook];
-
   // Write back
   try {
     fs.writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2));
     return {
       success: true,
-      message: 'Recall hooks installed successfully.',
+      message: 'Recall hooks installed successfully:\n  - Auto-save on session end\n  - Auto-save on git commit\n  - Save on "save" keyword',
     };
   } catch (error) {
     return {
@@ -188,11 +247,15 @@ export function uninstallHooks(): { success: boolean; message: string } {
     }
 
     // Remove Recall hooks from each hook type
-    for (const hookType of ['PreToolUse', 'PostToolUse', 'SessionEnd', 'SessionStart'] as const) {
+    for (const hookType of ['PreToolUse', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'] as const) {
       if (settings.hooks[hookType]) {
         settings.hooks[hookType] = settings.hooks[hookType]!.filter(hook =>
-          !hook.commands.some(cmd => cmd.includes(RECALL_HOOK_MARKER))
+          !hook.hooks?.some(h => h.command?.includes('recall hook'))
         );
+        // Clean up empty arrays
+        if (settings.hooks[hookType]!.length === 0) {
+          delete settings.hooks[hookType];
+        }
       }
     }
 
@@ -207,6 +270,84 @@ export function uninstallHooks(): { success: boolean; message: string } {
       message: `Failed to uninstall hooks: ${error}`,
     };
   }
+}
+
+/**
+ * Hook command: on-commit
+ * Called after Bash tool use - checks if it was a git commit
+ * Reads $CLAUDE_TOOL_INPUT to get the command that was executed
+ */
+export async function hookOnCommit(): Promise<void> {
+  const toolInput = process.env.CLAUDE_TOOL_INPUT;
+
+  if (!toolInput) {
+    // No tool input - not a Bash command
+    process.exit(0);
+  }
+
+  try {
+    const input = JSON.parse(toolInput);
+    const command = input.command || '';
+
+    // Check if this was a git commit command
+    if (!command.includes('git commit') && !command.includes('git push')) {
+      // Not a git commit/push - exit silently
+      process.exit(0);
+    }
+
+    // This was a git commit/push - save the session
+    await hookSave({ auto: true, quiet: true });
+  } catch {
+    // Failed to parse - exit silently
+    process.exit(0);
+  }
+}
+
+/**
+ * Hook command: on-prompt
+ * Called on user prompt submit - checks for save keywords
+ * Reads from stdin to get the prompt content
+ */
+export async function hookOnPrompt(): Promise<void> {
+  // Read prompt from stdin (Claude Code pipes it)
+  let prompt = '';
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk);
+    }
+    const input = Buffer.concat(chunks).toString('utf8');
+    const data = JSON.parse(input);
+    prompt = (data.prompt || data.message || '').toLowerCase();
+  } catch {
+    // No stdin or parse error - exit silently
+    process.exit(0);
+  }
+
+  // Check for save keywords
+  const savePatterns = [
+    /^save$/,                    // Just "save"
+    /^save\s+session$/,          // "save session"
+    /^save\s+this$/,             // "save this"
+    /let'?s?\s+save/,            // "let's save", "lets save"
+    /save\s+(?:the\s+)?session/, // "save the session"
+    /save\s+(?:where|what)/,     // "save where we are", "save what we did"
+    /save\s+progress/,           // "save progress"
+    /save\s+memory/,             // "save memory"
+    /save\s+context/,            // "save context"
+  ];
+
+  const shouldSave = savePatterns.some(pattern => pattern.test(prompt));
+
+  if (!shouldSave) {
+    // No save keyword - exit silently
+    process.exit(0);
+  }
+
+  // User wants to save - trigger save and inform Claude
+  console.log('Saving session to Recall...');
+  await hookSave({ auto: true, quiet: false });
+  console.log('Session saved! Team context updated.');
 }
 
 /**
@@ -287,6 +428,14 @@ export async function hookCommand(subcommand: string, options: Record<string, un
       });
       break;
 
+    case 'on-commit':
+      await hookOnCommit();
+      break;
+
+    case 'on-prompt':
+      await hookOnPrompt();
+      break;
+
     case 'install':
       const installResult = installHooks();
       if (installResult.success) {
@@ -310,6 +459,9 @@ export async function hookCommand(subcommand: string, options: Record<string, un
     case 'status':
       if (hooksInstalled()) {
         console.log(chalk.green('✓ Recall hooks are installed'));
+        console.log(chalk.dim('  - Auto-save on session end (Stop hook)'));
+        console.log(chalk.dim('  - Auto-save on git commit (PostToolUse hook)'));
+        console.log(chalk.dim('  - Save on "save" keyword (UserPromptSubmit hook)'));
       } else {
         console.log(chalk.yellow('Recall hooks are not installed'));
         console.log(chalk.dim('Run `recall hook install` to install'));
@@ -318,7 +470,7 @@ export async function hookCommand(subcommand: string, options: Record<string, un
 
     default:
       console.error(chalk.red(`Unknown hook subcommand: ${subcommand}`));
-      console.log('Available: context, save, install, uninstall, status');
+      console.log('Available: context, save, on-commit, on-prompt, install, uninstall, status');
       process.exit(1);
   }
 }

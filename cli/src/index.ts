@@ -100,4 +100,14 @@ hook
   .option('--quiet', 'Quiet mode')
   .action((opts) => hookCommand('save', opts));
 
+hook
+  .command('on-commit')
+  .description('(Internal) Handle post-commit hook')
+  .action(() => hookCommand('on-commit'));
+
+hook
+  .command('on-prompt')
+  .description('(Internal) Handle user prompt for save keywords')
+  .action(() => hookCommand('on-prompt'));
+
 program.parse();
