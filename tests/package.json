@@ -1,0 +1,25 @@
+{
+  "name": "recall-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:coverage": "vitest run --coverage",
+    "test:mcp": "vitest run mcp/",
+    "test:api": "vitest run api/",
+    "test:cli": "vitest run cli/",
+    "test:e2e": "vitest run e2e/",
+    "test:verbose": "VERBOSE_TESTS=1 vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "hono": "^4.6.16"
+  }
+}

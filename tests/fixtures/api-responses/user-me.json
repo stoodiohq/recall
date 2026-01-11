@@ -1,0 +1,23 @@
+{
+  "id": "user-test-123",
+  "email": "testuser@example.com",
+  "name": "Test User",
+  "avatar_url": "https://github.com/testuser.png",
+  "github_id": "12345678",
+  "github_username": "testuser",
+  "role": null,
+  "company": null,
+  "team_size": null,
+  "onboarding_completed": 1,
+  "last_mcp_connection": "2024-01-15T10:30:00Z",
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-15T10:30:00Z",
+  "team": {
+    "id": "team-test-123",
+    "name": "Test Team",
+    "slug": "test-team",
+    "tier": "pro",
+    "seats": 5,
+    "role": "owner"
+  }
+}

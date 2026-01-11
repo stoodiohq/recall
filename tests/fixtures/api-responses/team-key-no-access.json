@@ -1,0 +1,4 @@
+{
+  "hasAccess": false,
+  "message": "You do not have access to team memory. Possible reasons:\n- You are not a member of any team\n- Your team subscription is inactive\n- Your team has reached its seat limit\n\nContact your team admin or visit https://recall.team/dashboard"
+}

@@ -1,0 +1,6 @@
+{"id":"msg_001","timestamp":"2024-01-17T09:00:00Z","role":"user","content":"Valid message"}
+not valid json at all
+{"id":"msg_003","timestamp":"2024-01-17T09:01:00Z","role":"assistant","content":"Another valid message"}
+{"broken json without closing brace
+{"id":"msg_005","role":"user"}
+{"id":"msg_006","timestamp":"2024-01-17T09:02:00Z","role":"assistant","content":"Final valid message"}
