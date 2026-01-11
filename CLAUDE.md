@@ -414,6 +414,8 @@ Dashboard → Repos → Enable Repo → Select → Initialize .recall/ → Insta
 
 ### Deployment Commands
 
+**IMPORTANT: Pushing to GitHub is NOT enough. You must deploy to Cloudflare.**
+
 **API:**
 ```bash
 cd api && npx wrangler deploy
@@ -424,10 +426,11 @@ cd api && npx wrangler deploy
 cd api && npx wrangler d1 execute recall-db --remote --file=migrations/XXXX.sql
 ```
 
-**Frontend:**
+**Frontend (REQUIRED after any web/ changes):**
 ```bash
-cd web && npm run build && npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static --project-name=recall-web
+cd web && npm run build && npx wrangler pages deploy .vercel/output/static --project-name=recall-web --branch=main
 ```
+Note: Changes to web/ must be deployed to Cloudflare Pages. Git push alone does NOT deploy.
 
 **MCP (npm):**
 ```bash
