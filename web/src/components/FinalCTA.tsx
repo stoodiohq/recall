@@ -1,80 +1,46 @@
 'use client';
 
-import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { getGitHubAuthUrl } from '@/lib/auth';
 
 export function FinalCTA() {
-  const [copied, setCopied] = useState(false);
-  const command = 'curl -fsSL https://recall.team/i | sh';
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const authUrl = getGitHubAuthUrl();
 
   return (
     <section className="py-section px-6 bg-bg-elevated">
       <div className="max-w-3xl mx-auto text-center">
-        <motion.h2
-          className="text-h1 text-text-primary mb-8"
+        <motion.div
+          className="inline-block mb-6 px-4 py-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          One command to get started.
-        </motion.h2>
+          <span className="text-cyan-400 text-sm font-medium">The first team memory layer for AI coding tools</span>
+        </motion.div>
 
-        <motion.div
-          className="relative bg-bg-base border border-border-subtle rounded-lg p-4 mb-8"
+        <motion.h2
+          className="text-h1 text-text-primary mb-6"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.1 }}
         >
-          <div className="font-mono text-code text-left flex items-center justify-between">
-            <div>
-              <span className="text-success">$ </span>
-              <span className="text-text-primary">{command}</span>
-            </div>
-            <button
-              onClick={handleCopy}
-              className="ml-4 p-2 text-text-muted hover:text-text-primary transition-colors"
-              title="Copy to clipboard"
-            >
-              {copied ? (
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-success">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
-                </svg>
-              )}
-            </button>
-          </div>
-          {copied && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-sm text-success"
-            >
-              Copied. Go paste it.
-            </motion.div>
-          )}
-        </motion.div>
+          Your team&apos;s AI should know what your team knows.
+        </motion.h2>
 
         <motion.a
-          href="/signup"
-          className="inline-block bg-text-primary text-bg-base px-8 py-4 rounded-sm font-semibold text-lg hover:translate-y-[-1px] hover:shadow-lg hover:shadow-white/15 transition-all"
+          href={authUrl}
+          className="inline-flex items-center gap-3 bg-text-primary text-bg-base px-8 py-4 rounded-sm font-semibold text-lg hover:translate-y-[-2px] hover:shadow-xl hover:shadow-white/20 transition-all"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.2 }}
         >
-          Get Started
+          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
+          </svg>
+          Start Trial
         </motion.a>
       </div>
     </section>

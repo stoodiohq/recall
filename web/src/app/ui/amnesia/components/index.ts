@@ -1,0 +1,10 @@
+export { Header } from './Header';
+export { Hero } from './Hero';
+export { Terminal } from './Terminal';
+export { Problem } from './Problem';
+export { Demo } from './Demo';
+export { HowItWorks } from './HowItWorks';
+export { Trust } from './Trust';
+export { Pricing } from './Pricing';
+export { FinalCTA } from './FinalCTA';
+export { Footer } from './Footer';

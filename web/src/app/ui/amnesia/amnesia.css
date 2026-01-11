@@ -1,0 +1,668 @@
+/* Amnesia Design - "The Dissolving Memory" */
+/* This CSS is scoped to the /ui/amnesia route only */
+
+/* ============================================
+   CSS VARIABLES
+   ============================================ */
+:root {
+  /* Background layers */
+  --am-bg-void: #0A0A0B;
+  --am-bg-elevated: #111113;
+  --am-bg-surface: #18181B;
+  --am-bg-hover: #1F1F23;
+
+  /* Text hierarchy */
+  --am-text-primary: #FAFAF9;
+  --am-text-secondary: #A1A1AA;
+  --am-text-muted: #71717A;
+  --am-text-ghost: #3F3F46;
+
+  /* Accent colors */
+  --am-amber: #F59E0B;
+  --am-amber-glow: rgba(245, 158, 11, 0.15);
+  --am-amber-bright: #FBBF24;
+  --am-terminal-green: #22C55E;
+  --am-terminal-green-dim: #16A34A;
+
+  /* Decay gradient stages */
+  --am-decay-0: #FAFAF9;
+  --am-decay-1: #A1A1AA;
+  --am-decay-2: #71717A;
+  --am-decay-3: #52525B;
+  --am-decay-4: #3F3F46;
+  --am-decay-5: #27272A;
+
+  /* Borders */
+  --am-border-subtle: #1F1F23;
+  --am-border-visible: #27272A;
+  --am-border-focus: #F59E0B;
+  --am-border-glow: rgba(245, 158, 11, 0.3);
+
+  /* Syntax highlighting */
+  --am-syntax-prompt: #22C55E;
+  --am-syntax-command: #FAFAF9;
+  --am-syntax-flag: #60A5FA;
+  --am-syntax-string: #F59E0B;
+  --am-syntax-comment: #52525B;
+  --am-syntax-output: #A1A1AA;
+  --am-syntax-highlight: #F59E0B;
+
+  /* Spacing */
+  --am-space-1: 4px;
+  --am-space-2: 8px;
+  --am-space-3: 12px;
+  --am-space-4: 16px;
+  --am-space-5: 20px;
+  --am-space-6: 24px;
+  --am-space-8: 32px;
+  --am-space-10: 40px;
+  --am-space-12: 48px;
+  --am-space-16: 64px;
+  --am-space-20: 80px;
+  --am-space-24: 96px;
+  --am-space-32: 128px;
+
+  /* Easing curves */
+  --am-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --am-ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --am-ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --am-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --am-ease-dissolve: cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+/* ============================================
+   GLOBAL RESET FOR AMNESIA PAGES
+   ============================================ */
+.amnesia-page {
+  min-height: 100vh;
+  background-color: var(--am-bg-void);
+  color: var(--am-text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.amnesia-page * {
+  box-sizing: border-box;
+}
+
+/* ============================================
+   NOISE OVERLAY
+   ============================================ */
+.amnesia-noise {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.015;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* ============================================
+   TYPOGRAPHY
+   ============================================ */
+.am-text-hero {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1.0;
+  letter-spacing: -0.03em;
+}
+
+.am-text-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.am-text-h1 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.am-text-h2 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.am-text-h3 {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.am-text-body-lg {
+  font-size: 20px;
+  line-height: 1.6;
+}
+
+.am-text-body {
+  font-size: 16px;
+  line-height: 1.625;
+}
+
+.am-text-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.am-text-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Mobile typography */
+@media (max-width: 768px) {
+  .am-text-hero {
+    font-size: 40px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .am-text-display {
+    font-size: 28px;
+  }
+
+  .am-text-h1 {
+    font-size: 28px;
+  }
+}
+
+/* ============================================
+   CONTAINER
+   ============================================ */
+.am-container {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.am-container-sm {
+  max-width: 640px;
+}
+
+.am-container-md {
+  max-width: 768px;
+}
+
+.am-container-lg {
+  max-width: 1024px;
+}
+
+/* ============================================
+   SECTION
+   ============================================ */
+.am-section {
+  padding: 128px 24px;
+  position: relative;
+}
+
+@media (max-width: 768px) {
+  .am-section {
+    padding: 96px 24px;
+  }
+}
+
+/* ============================================
+   BUTTONS
+   ============================================ */
+.am-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 28px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--am-text-primary);
+  color: var(--am-bg-void);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s var(--am-ease-out-expo);
+  text-decoration: none;
+}
+
+.am-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 12px rgba(250, 250, 249, 0.2),
+    0 8px 24px rgba(250, 250, 249, 0.1);
+}
+
+.am-btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Shimmer effect */
+.am-btn-primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+  transition: left 0.5s ease;
+}
+
+.am-btn-primary:hover::before {
+  left: 100%;
+}
+
+.am-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 24px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--am-text-primary);
+  border: 1px solid var(--am-border-visible);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.am-btn-secondary:hover {
+  border-color: var(--am-text-muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ============================================
+   CARDS
+   ============================================ */
+.am-card {
+  background: linear-gradient(
+    135deg,
+    rgba(24, 24, 27, 0.8) 0%,
+    rgba(17, 17, 19, 0.9) 100%
+  );
+  border: 1px solid var(--am-border-subtle);
+  border-radius: 12px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s var(--am-ease-out-expo);
+}
+
+.am-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    rgba(255, 255, 255, 0.02) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.am-card:hover {
+  border-color: var(--am-border-visible);
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.2),
+    0 10px 15px -3px rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================
+   TERMINAL
+   ============================================ */
+.am-terminal {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 4px 6px -1px rgba(0, 0, 0, 0.3),
+    0 10px 15px -3px rgba(0, 0, 0, 0.3),
+    0 20px 25px -5px rgba(0, 0, 0, 0.4),
+    0 25px 50px -12px rgba(245, 158, 11, 0.08);
+}
+
+.am-terminal--active {
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.1),
+    0 4px 6px -1px rgba(0, 0, 0, 0.3),
+    0 10px 15px -3px rgba(0, 0, 0, 0.3),
+    0 20px 25px -5px rgba(0, 0, 0, 0.4),
+    0 0 60px -12px rgba(245, 158, 11, 0.15),
+    0 0 100px -20px rgba(245, 158, 11, 0.1);
+  transition: box-shadow 0.8s var(--am-ease-out-expo);
+}
+
+.am-terminal-chrome {
+  height: 44px;
+  background: linear-gradient(180deg, #1A1A1D 0%, #141416 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 8px;
+}
+
+.am-traffic-lights {
+  display: flex;
+  gap: 8px;
+}
+
+.am-traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.am-traffic-light--close {
+  background: #FF5F56;
+  box-shadow:
+    inset 0 -1px 1px rgba(0, 0, 0, 0.2),
+    0 0 0 0.5px rgba(0, 0, 0, 0.3);
+}
+
+.am-traffic-light--minimize {
+  background: #FFBD2E;
+  box-shadow:
+    inset 0 -1px 1px rgba(0, 0, 0, 0.2),
+    0 0 0 0.5px rgba(0, 0, 0, 0.3);
+}
+
+.am-traffic-light--maximize {
+  background: #27C93F;
+  box-shadow:
+    inset 0 -1px 1px rgba(0, 0, 0, 0.2),
+    0 0 0 0.5px rgba(0, 0, 0, 0.3);
+}
+
+.am-terminal-title {
+  flex: 1;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--am-text-muted);
+  letter-spacing: 0.02em;
+}
+
+.am-terminal-body {
+  background: linear-gradient(
+    180deg,
+    #0D0D0F 0%,
+    #0A0A0C 50%,
+    #080809 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: none;
+  padding: 20px 24px;
+  min-height: 360px;
+  position: relative;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* Scanlines */
+.am-terminal-body::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.am-terminal-prompt {
+  color: var(--am-syntax-prompt);
+}
+
+.am-terminal-command {
+  color: var(--am-syntax-command);
+}
+
+.am-terminal-output {
+  color: var(--am-syntax-output);
+}
+
+.am-terminal-highlight {
+  color: var(--am-syntax-highlight);
+}
+
+.am-terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 18px;
+  background: var(--am-text-primary);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: am-cursor-blink 1s step-end infinite;
+}
+
+@keyframes am-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ============================================
+   DISSOLVE ANIMATION
+   ============================================ */
+@keyframes am-dissolve-char {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  30% {
+    opacity: 0.7;
+    transform: translateY(-2px) scale(0.98);
+    filter: blur(0.5px);
+  }
+  60% {
+    opacity: 0.3;
+    transform: translateY(-8px) scale(0.9);
+    filter: blur(1px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.5);
+    filter: blur(2px);
+  }
+}
+
+@keyframes am-reconstruct-char {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.5);
+    filter: blur(2px);
+    color: var(--am-text-muted);
+  }
+  40% {
+    opacity: 0.5;
+    transform: translateY(8px) scale(0.9);
+    filter: blur(1px);
+    color: var(--am-text-secondary);
+  }
+  70% {
+    opacity: 0.8;
+    transform: translateY(2px) scale(0.98);
+    filter: blur(0.5px);
+    color: var(--am-amber);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+    color: var(--am-amber);
+  }
+}
+
+.am-dissolving {
+  animation: am-dissolve-char 0.8s var(--am-ease-dissolve) forwards;
+}
+
+.am-reconstructing {
+  animation: am-reconstruct-char 0.6s var(--am-ease-out-expo) forwards;
+}
+
+/* ============================================
+   GLOW PULSE
+   ============================================ */
+@keyframes am-glow-pulse {
+  0%, 100% {
+    text-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+  }
+  50% {
+    text-shadow: 0 0 30px rgba(245, 158, 11, 0.5);
+  }
+}
+
+.am-text-glow {
+  color: var(--am-amber);
+  animation: am-glow-pulse 3s ease-in-out infinite;
+}
+
+/* ============================================
+   BADGE
+   ============================================ */
+.am-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--am-amber);
+}
+
+/* ============================================
+   FOCUS STATES
+   ============================================ */
+.amnesia-page :focus-visible {
+  outline: 2px solid var(--am-amber);
+  outline-offset: 2px;
+}
+
+/* Skip link */
+.am-skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--am-amber);
+  color: #0A0A0B;
+  padding: 8px 16px;
+  z-index: 10000;
+  transition: top 0.2s ease;
+}
+
+.am-skip-link:focus {
+  top: 0;
+}
+
+/* ============================================
+   REDUCED MOTION
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  .amnesia-page *,
+  .amnesia-page *::before,
+  .amnesia-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .am-terminal-cursor {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   GRIDS
+   ============================================ */
+.am-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.am-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 1024px) {
+  .am-grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .am-grid-3,
+  .am-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   SCROLLBAR
+   ============================================ */
+.amnesia-page ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.amnesia-page ::-webkit-scrollbar-track {
+  background: var(--am-bg-void);
+}
+
+.amnesia-page ::-webkit-scrollbar-thumb {
+  background: var(--am-border-visible);
+  border-radius: 4px;
+}
+
+.amnesia-page ::-webkit-scrollbar-thumb:hover {
+  background: var(--am-text-muted);
+}
+
+/* ============================================
+   SELECTION
+   ============================================ */
+.amnesia-page ::selection {
+  background-color: rgba(245, 158, 11, 0.3);
+  color: var(--am-text-primary);
+}

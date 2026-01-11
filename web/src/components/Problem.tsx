@@ -2,70 +2,65 @@
 
 import { motion } from 'framer-motion';
 
-const painPoints = [
+const examples = [
   {
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-      </svg>
-    ),
-    title: 'Re-explaining context',
-    description: 'Same setup. Every session.',
+    day: 'Monday',
+    text: 'You explain your auth architecture to Claude.',
   },
   {
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-      </svg>
-    ),
-    title: 'Repeated failures',
-    description: 'Your teammate already tried that.',
+    day: 'Tuesday',
+    text: 'Your teammate explains the same thing to their session.',
   },
   {
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M22 10.5h-6m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z" />
-      </svg>
-    ),
-    title: 'Lost knowledge',
-    description: 'When devs leave, context leaves too.',
+    day: 'Wednesday',
+    text: 'New session. You explain it again.',
   },
 ];
 
 export function Problem() {
   return (
     <section className="py-section px-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <motion.h2
-          className="text-h1 text-text-primary text-center mb-16"
+          className="text-h1 text-text-primary text-center mb-6"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          Your AI starts fresh every session.
-          <br />
-          <span className="text-text-secondary">Your team&apos;s knowledge shouldn&apos;t.</span>
+          Your team keeps teaching AI the same things
         </motion.h2>
 
-        <div className="grid md:grid-cols-3 gap-8">
-          {painPoints.map((point, index) => (
+        <div className="space-y-4 mb-12">
+          {examples.map((example, index) => (
             <motion.div
-              key={point.title}
-              className="text-center"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              key={example.day}
+              className="flex items-start gap-4 bg-bg-elevated border border-border-subtle rounded-lg p-6"
+              initial={{ opacity: 0, x: -20 }}
+              whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              transition={{ duration: 0.6, delay: index * 0.1 }}
+              transition={{ duration: 0.5, delay: index * 0.1 }}
             >
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-bg-elevated border border-border-subtle text-text-secondary mb-4">
-                {point.icon}
-              </div>
-              <h3 className="text-h3 text-text-primary mb-2">{point.title}</h3>
-              <p className="text-body text-text-secondary">{point.description}</p>
+              <span className="text-accent font-semibold min-w-[100px]">{example.day}:</span>
+              <span className="text-text-secondary">{example.text}</span>
             </motion.div>
           ))}
         </div>
+
+        <motion.div
+          className="bg-bg-elevated border border-border-subtle rounded-lg p-8"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+        >
+          <p className="text-text-secondary mb-4">
+            Your senior devs carry context in their heads. When they&apos;re out, the AI is useless. When they leave, that knowledge walks out the door.
+          </p>
+          <p className="text-text-primary font-medium">
+            The average developer spends 15-20% of every AI session on context setup. At $150/hour fully loaded, that&apos;s over $3,000 per developer per year - just on repetition.
+          </p>
+        </motion.div>
       </div>
     </section>
   );

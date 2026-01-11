@@ -8,7 +8,6 @@ import { Product } from '@/components/Product';
 import { TrustSecurity } from '@/components/TrustSecurity';
 import { WorksWith } from '@/components/WorksWith';
 import { Pricing } from '@/components/Pricing';
-import { SocialProof } from '@/components/SocialProof';
 import { FinalCTA } from '@/components/FinalCTA';
 import { Footer } from '@/components/Footer';
 
@@ -18,12 +17,11 @@ export default function Home() {
       <Header />
       <Hero />
       <Problem />
-      <HowItWorks />
       <Product />
+      <HowItWorks />
       <TrustSecurity />
       <WorksWith />
       <Pricing />
-      <SocialProof />
       <FinalCTA />
       <Footer />
     </main>

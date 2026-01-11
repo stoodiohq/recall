@@ -52,7 +52,7 @@ export function Pricing() {
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          Pricing
+          Less than one hour of developer time. Saves dozens.
         </motion.h2>
 
         <motion.p
@@ -62,7 +62,7 @@ export function Pricing() {
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.1 }}
         >
-          Simple pricing. Scale with your team.
+          14-day free trial. Cancel anytime.
         </motion.p>
 
         <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">

@@ -2,99 +2,67 @@
 
 import { motion } from 'framer-motion';
 
+const benefits = [
+  {
+    title: 'Automatic',
+    description: 'No one has to remember to update anything.',
+  },
+  {
+    title: 'Team-wide',
+    description: 'Your teammate\'s learnings show up in your session.',
+  },
+  {
+    title: 'Curated',
+    description: 'AI extracts what matters - not a dump of everything.',
+  },
+];
+
 export function Product() {
   return (
-    <section className="py-section px-6">
-      <div className="max-w-5xl mx-auto">
+    <section className="py-section px-6 bg-bg-elevated">
+      <div className="max-w-4xl mx-auto">
         <motion.h2
-          className="text-h1 text-text-primary text-center mb-4"
+          className="text-h1 text-text-primary text-center mb-6"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
         >
-          It&apos;s just markdown in your repo.
+          What one developer teaches, every AI session knows
         </motion.h2>
 
-        <motion.p
-          className="text-body-lg text-text-secondary text-center mb-16"
+        <motion.div
+          className="space-y-6 mb-12"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6, delay: 0.1 }}
         >
-          No proprietary formats. No vendor lock-in. Your data, your repo.
-        </motion.p>
-
-        <motion.div
-          className="bg-bg-elevated border border-border-subtle rounded-lg p-8"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6, delay: 0.2 }}
-        >
-          <div className="font-mono text-code">
-            <div className="text-text-muted mb-2">acme/app/</div>
-            <div className="ml-4 text-text-secondary">├── .git/</div>
-            <div className="ml-4 text-accent">├── .recall/</div>
-            <div className="ml-8 text-text-secondary">
-              ├── <span className="text-text-primary">context.md</span>
-              <span className="text-text-muted ml-4">Team brain (~1.5-3k tokens)</span>
-            </div>
-            <div className="ml-8 text-text-secondary">
-              ├── <span className="text-text-primary">history.md</span>
-              <span className="text-text-muted ml-4">Encyclopedia (~30k tokens)</span>
-            </div>
-            <div className="ml-8 text-text-secondary">
-              └── <span className="text-text-primary">sessions/</span>
-              <span className="text-text-muted ml-4">Full transcripts (~1.5k each)</span>
-            </div>
-            <div className="ml-4 text-text-secondary">├── src/</div>
-            <div className="ml-4 text-text-secondary">└── package.json</div>
-          </div>
+          <p className="text-body-lg text-text-secondary text-center">
+            Recall runs silently in the background. When a session ends, it captures the important stuff - decisions made, patterns discovered, problems solved.
+          </p>
+          <p className="text-body-lg text-text-secondary text-center">
+            Then it shares that context with your whole team.
+          </p>
+          <p className="text-body-lg text-text-primary text-center font-medium">
+            Next session, any teammate&apos;s AI already knows. No copy-pasting. No &quot;let me explain our setup.&quot; It just has context.
+          </p>
         </motion.div>
 
-        <div className="grid md:grid-cols-4 gap-8 mt-12">
-          <motion.div
-            className="text-center"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-          >
-            <h3 className="text-h3 text-text-primary mb-2">Human-readable</h3>
-            <p className="text-body text-text-secondary">Open it in any editor.</p>
-          </motion.div>
-          <motion.div
-            className="text-center"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.4 }}
-          >
-            <h3 className="text-h3 text-text-primary mb-2">Git-diffable</h3>
-            <p className="text-body text-text-secondary">See what changed.</p>
-          </motion.div>
-          <motion.div
-            className="text-center"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.5 }}
-          >
-            <h3 className="text-h3 text-text-primary mb-2">No lock-in</h3>
-            <p className="text-body text-text-secondary">It&apos;s your data.</p>
-          </motion.div>
-          <motion.div
-            className="text-center"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.6 }}
-          >
-            <h3 className="text-h3 text-text-primary mb-2">Zero maintenance</h3>
-            <p className="text-body text-text-secondary">No files to maintain manually.</p>
-          </motion.div>
+        <div className="grid md:grid-cols-3 gap-6">
+          {benefits.map((benefit, index) => (
+            <motion.div
+              key={benefit.title}
+              className="bg-bg-base border border-border-subtle rounded-lg p-6 text-center"
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
+            >
+              <h3 className="text-h3 text-accent mb-2">{benefit.title}</h3>
+              <p className="text-body text-text-secondary">{benefit.description}</p>
+            </motion.div>
+          ))}
         </div>
       </div>
     </section>

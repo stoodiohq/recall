@@ -428,10 +428,10 @@ cd api && npx wrangler d1 execute recall-db --remote --file=migrations/XXXX.sql
 
 **Frontend (REQUIRED after any web/ changes):**
 ```bash
-cd web && npm run build && CLOUDFLARE_ACCOUNT_ID=d3e569d2d49281d2d3ebe1eb5069dea4 npx wrangler pages deploy .vercel/output/static --project-name=recall-web --branch=main
+cd web && npm run build && npx @cloudflare/next-on-pages && CLOUDFLARE_ACCOUNT_ID=d3e569d2d49281d2d3ebe1eb5069dea4 npx wrangler pages deploy .vercel/output/static --project-name=recall-web --branch=main
 ```
 Note: Changes to web/ must be deployed to Cloudflare Pages. Git push alone does NOT deploy.
-Production URL: https://recall.team
+Production URL: https://recall.team (CDN cache may take a few minutes to update)
 
 **MCP (npm):**
 ```bash
@@ -447,6 +447,9 @@ cd mcp && npm version patch && npm publish
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `GEMINI_API_KEY`
+- `LINEAR_CLIENT_ID`
+- `LINEAR_CLIENT_SECRET`
+- `LINEAR_WEBHOOK_SECRET`
 
 **Frontend (set in wrangler.toml or Pages dashboard):**
 - `NEXT_PUBLIC_API_URL` = `https://api.recall.team`

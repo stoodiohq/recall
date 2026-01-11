@@ -5,6 +5,8 @@
  * Auth Endpoints:
  * - GET /auth/github - Start GitHub OAuth flow
  * - GET /auth/github/callback - Handle OAuth callback
+ * - GET /auth/linear - Start Linear OAuth flow
+ * - GET /auth/linear/callback - Handle Linear OAuth callback
  * - GET /auth/me - Current user info
  * - POST /auth/logout - End session
  * - POST /auth/exchange - Exchange auth code for JWT
@@ -48,6 +50,7 @@
  * - POST /checkout/create-session - Create Stripe checkout
  * - POST /checkout/portal - Get Stripe customer portal
  * - POST /webhooks/stripe - Stripe webhook handler
+ * - POST /webhooks/linear - Linear webhook handler
  *
  * Enterprise BYOK Endpoints:
  * - GET /teams/:id/llm-key - Check if LLM key configured
@@ -118,6 +121,10 @@ interface Env {
   STRIPE_SECRET_KEY: string;
   STRIPE_PRICE_ID: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  // Linear
+  LINEAR_CLIENT_ID?: string;
+  LINEAR_CLIENT_SECRET?: string;
+  LINEAR_WEBHOOK_SECRET?: string;
 }
 
 interface RecallEvent {
@@ -760,6 +767,455 @@ app.post('/auth/exchange', async (c) => {
   await c.env.DB.prepare('DELETE FROM auth_codes WHERE code = ?').bind(code).run();
 
   return c.json({ token: stored.jwt });
+});
+
+// ============================================================
+// Linear OAuth endpoints
+// ============================================================
+
+// Start Linear OAuth flow
+app.get('/auth/linear', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized - login with GitHub first' }, 401);
+  }
+
+  const clientId = c.env.LINEAR_CLIENT_ID;
+  if (!clientId) {
+    return c.json({ error: 'Linear integration not configured' }, 500);
+  }
+
+  const redirectUri = c.env.ENVIRONMENT === 'production'
+    ? 'https://api.recall.team/auth/linear/callback'
+    : 'http://localhost:8787/auth/linear/callback';
+
+  // Include user ID in state for callback
+  const state = `${crypto.randomUUID()}:${user.id}`;
+
+  // Linear OAuth scopes: read access to issues, projects, teams, comments
+  const scope = 'read,write,issues:create,comments:create';
+
+  const authUrl = new URL('https://linear.app/oauth/authorize');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', scope);
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('prompt', 'consent');
+
+  // Store state in cookie for CSRF protection
+  const isProduction = c.env.ENVIRONMENT === 'production';
+  const cookieOptions = [
+    `linear_oauth_state=${state}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=600', // 10 minutes
+    isProduction ? 'Secure' : '',
+  ].filter(Boolean).join('; ');
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      'Location': authUrl.toString(),
+      'Set-Cookie': cookieOptions,
+    },
+  });
+});
+
+// Handle Linear OAuth callback
+app.get('/auth/linear/callback', async (c) => {
+  const code = c.req.query('code');
+  const error = c.req.query('error');
+  const stateParam = c.req.query('state');
+
+  if (error) {
+    const baseUrl = c.env.ENVIRONMENT === 'production' ? 'https://recall.team' : 'http://localhost:3003';
+    return c.redirect(`${baseUrl}/dashboard/integrations?error=${encodeURIComponent(error)}`);
+  }
+
+  if (!code || !stateParam) {
+    return c.json({ error: 'Missing authorization code or state' }, 400);
+  }
+
+  // Validate OAuth state
+  const cookies = c.req.header('Cookie') || '';
+  const stateCookie = cookies.split(';')
+    .map(cookie => cookie.trim())
+    .find(cookie => cookie.startsWith('linear_oauth_state='));
+  const storedState = stateCookie?.split('=')[1];
+
+  if (!storedState || stateParam !== storedState) {
+    console.error('[Linear OAuth] State mismatch');
+    return c.json({ error: 'Invalid state parameter' }, 400);
+  }
+
+  // Extract user ID from state
+  const [, userId] = stateParam.split(':');
+  if (!userId) {
+    return c.json({ error: 'Invalid state format' }, 400);
+  }
+
+  const clientId = c.env.LINEAR_CLIENT_ID;
+  const clientSecret = c.env.LINEAR_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return c.json({ error: 'Linear integration not configured' }, 500);
+  }
+
+  const redirectUri = c.env.ENVIRONMENT === 'production'
+    ? 'https://api.recall.team/auth/linear/callback'
+    : 'http://localhost:8787/auth/linear/callback';
+
+  try {
+    // Exchange code for access token
+    const tokenResponse = await fetch('https://api.linear.app/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        code,
+      }),
+    });
+
+    const tokenData = await tokenResponse.json() as {
+      access_token?: string;
+      token_type?: string;
+      expires_in?: number;
+      scope?: string;
+      error?: string;
+      error_description?: string;
+    };
+
+    if (tokenData.error || !tokenData.access_token) {
+      console.error('[Linear OAuth] Token error:', tokenData.error, tokenData.error_description);
+      return c.json({ error: tokenData.error_description || 'Failed to get access token' }, 400);
+    }
+
+    // Get Linear user/org info
+    const linearUserResponse = await fetch('https://api.linear.app/graphql', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${tokenData.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          query {
+            viewer {
+              id
+              name
+              email
+            }
+            organization {
+              id
+              name
+              urlKey
+            }
+          }
+        `,
+      }),
+    });
+
+    const linearData = await linearUserResponse.json() as {
+      data?: {
+        viewer: { id: string; name: string; email: string };
+        organization: { id: string; name: string; urlKey: string };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (linearData.errors || !linearData.data) {
+      console.error('[Linear OAuth] GraphQL error:', linearData.errors);
+      return c.json({ error: 'Failed to get Linear user info' }, 400);
+    }
+
+    const { viewer, organization } = linearData.data;
+    const now = new Date().toISOString();
+
+    // Get user's team
+    const membership = await getUserTeamMembership(c.env.DB, userId);
+    if (!membership) {
+      return c.json({ error: 'User is not a member of any team' }, 400);
+    }
+
+    // Store or update Linear connection
+    const existingConnection = await c.env.DB.prepare(
+      'SELECT id FROM linear_connections WHERE team_id = ? AND linear_org_id = ?'
+    ).bind(membership.teamId, organization.id).first<{ id: string }>();
+
+    if (existingConnection) {
+      // Update existing connection
+      await c.env.DB.prepare(`
+        UPDATE linear_connections
+        SET access_token = ?, linear_user_id = ?, linear_user_name = ?, linear_user_email = ?,
+            linear_org_name = ?, linear_org_url_key = ?, scope = ?, connected_by_user_id = ?, updated_at = ?
+        WHERE id = ?
+      `).bind(
+        tokenData.access_token,
+        viewer.id,
+        viewer.name,
+        viewer.email,
+        organization.name,
+        organization.urlKey,
+        tokenData.scope || '',
+        userId,
+        now,
+        existingConnection.id
+      ).run();
+    } else {
+      // Create new connection
+      const connectionId = generateId();
+      await c.env.DB.prepare(`
+        INSERT INTO linear_connections (id, team_id, access_token, linear_org_id, linear_org_name, linear_org_url_key,
+          linear_user_id, linear_user_name, linear_user_email, scope, connected_by_user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        connectionId,
+        membership.teamId,
+        tokenData.access_token,
+        organization.id,
+        organization.name,
+        organization.urlKey,
+        viewer.id,
+        viewer.name,
+        viewer.email,
+        tokenData.scope || '',
+        userId,
+        now,
+        now
+      ).run();
+    }
+
+    // Clear the OAuth state cookie and redirect to success page
+    const isProduction = c.env.ENVIRONMENT === 'production';
+    const baseUrl = isProduction ? 'https://recall.team' : 'http://localhost:3003';
+    const clearCookieOptions = [
+      'linear_oauth_state=',
+      'Path=/',
+      'HttpOnly',
+      'Max-Age=0',
+      isProduction ? 'Secure' : '',
+    ].filter(Boolean).join('; ');
+
+    return new Response(null, {
+      status: 302,
+      headers: {
+        'Location': `${baseUrl}/dashboard/integrations?linear=connected`,
+        'Set-Cookie': clearCookieOptions,
+      },
+    });
+
+  } catch (err) {
+    console.error('[Linear OAuth] Error:', err);
+    return c.json({ error: 'Authentication failed' }, 500);
+  }
+});
+
+// Get Linear connection status for current user's team
+app.get('/auth/linear/status', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id);
+  if (!membership) {
+    return c.json({ connected: false });
+  }
+
+  const connection = await c.env.DB.prepare(`
+    SELECT linear_org_name, linear_org_url_key, linear_user_name, connected_by_user_id, created_at
+    FROM linear_connections
+    WHERE team_id = ?
+    LIMIT 1
+  `).bind(membership.teamId).first<{
+    linear_org_name: string;
+    linear_org_url_key: string;
+    linear_user_name: string;
+    connected_by_user_id: string;
+    created_at: string;
+  }>();
+
+  if (!connection) {
+    return c.json({ connected: false });
+  }
+
+  return c.json({
+    connected: true,
+    organization: {
+      name: connection.linear_org_name,
+      urlKey: connection.linear_org_url_key,
+    },
+    connectedBy: connection.linear_user_name,
+    connectedAt: connection.created_at,
+  });
+});
+
+// Disconnect Linear
+app.delete('/auth/linear', async (c) => {
+  const user = await getAuthUser(c);
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const membership = await getUserTeamMembership(c.env.DB, user.id);
+  if (!membership) {
+    return c.json({ error: 'Not a team member' }, 400);
+  }
+
+  if (!canManage(membership.role)) {
+    return c.json({ error: 'Admin access required' }, 403);
+  }
+
+  await c.env.DB.prepare('DELETE FROM linear_connections WHERE team_id = ?')
+    .bind(membership.teamId).run();
+
+  return c.json({ success: true });
+});
+
+// ============================================================
+// Linear Webhook Handler
+// ============================================================
+
+async function verifyLinearWebhookSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signatureBuffer = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      encoder.encode(payload)
+    );
+
+    const computedSig = Array.from(new Uint8Array(signatureBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Constant-time comparison
+    if (computedSig.length !== signature.length) {
+      return false;
+    }
+
+    let result = 0;
+    for (let i = 0; i < computedSig.length; i++) {
+      result |= computedSig.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+
+    return result === 0;
+  } catch {
+    return false;
+  }
+}
+
+interface LinearWebhookPayload {
+  action: 'create' | 'update' | 'remove';
+  type: 'Issue' | 'Comment' | 'Project' | 'Cycle' | 'IssueLabel';
+  createdAt: string;
+  data: {
+    id: string;
+    title?: string;
+    description?: string;
+    state?: { name: string };
+    team?: { key: string };
+    project?: { name: string };
+    assignee?: { name: string };
+    creator?: { name: string };
+    priority?: number;
+    [key: string]: unknown;
+  };
+  url?: string;
+  organizationId: string;
+}
+
+app.post('/webhooks/linear', async (c) => {
+  const payload = await c.req.text();
+  const signature = c.req.header('linear-signature');
+
+  // Verify webhook signature if secret is configured
+  if (c.env.LINEAR_WEBHOOK_SECRET) {
+    if (!signature) {
+      console.error('[Linear Webhook] Missing signature header');
+      return c.json({ error: 'Missing signature' }, 401);
+    }
+
+    const isValid = await verifyLinearWebhookSignature(payload, signature, c.env.LINEAR_WEBHOOK_SECRET);
+    if (!isValid) {
+      console.error('[Linear Webhook] Invalid signature');
+      return c.json({ error: 'Invalid signature' }, 401);
+    }
+  } else {
+    console.warn('[Linear Webhook] LINEAR_WEBHOOK_SECRET not configured - skipping signature verification');
+  }
+
+  let event: LinearWebhookPayload;
+  try {
+    event = JSON.parse(payload);
+  } catch {
+    console.error('[Linear Webhook] Invalid JSON');
+    return c.json({ error: 'Invalid payload' }, 400);
+  }
+
+  console.log('[Linear Webhook] Event:', event.type, event.action, 'org:', event.organizationId);
+
+  // Find the team associated with this Linear organization
+  const connection = await c.env.DB.prepare(`
+    SELECT team_id FROM linear_connections WHERE linear_org_id = ?
+  `).bind(event.organizationId).first<{ team_id: string }>();
+
+  if (!connection) {
+    console.log('[Linear Webhook] No team connected for org:', event.organizationId);
+    // Return 200 to acknowledge receipt (Linear will retry on non-2xx)
+    return c.json({ received: true, processed: false, reason: 'No team connected for this organization' });
+  }
+
+  const now = new Date().toISOString();
+
+  // Log the webhook event for future use
+  // This can be extended to trigger notifications, sync data, etc.
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO linear_webhook_events (id, team_id, linear_org_id, event_type, event_action, event_data, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      generateId(),
+      connection.team_id,
+      event.organizationId,
+      event.type,
+      event.action,
+      JSON.stringify(event.data),
+      now
+    ).run();
+  } catch (err) {
+    // Table might not exist yet - log but don't fail
+    console.warn('[Linear Webhook] Failed to log event:', err);
+  }
+
+  // Handle specific event types as needed
+  // For now, just acknowledge receipt
+  return c.json({
+    received: true,
+    processed: true,
+    teamId: connection.team_id,
+    eventType: event.type,
+    eventAction: event.action,
+  });
 });
 
 // ============================================================
