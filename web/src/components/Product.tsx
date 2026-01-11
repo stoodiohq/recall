@@ -54,7 +54,7 @@ export function Product() {
           </div>
         </motion.div>
 
-        <div className="grid md:grid-cols-3 gap-8 mt-12">
+        <div className="grid md:grid-cols-4 gap-8 mt-12">
           <motion.div
             className="text-center"
             initial={{ opacity: 0, y: 20 }}
@@ -84,6 +84,16 @@ export function Product() {
           >
             <h3 className="text-h3 text-text-primary mb-2">No lock-in</h3>
             <p className="text-body text-text-secondary">It&apos;s your data.</p>
+          </motion.div>
+          <motion.div
+            className="text-center"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6, delay: 0.6 }}
+          >
+            <h3 className="text-h3 text-text-primary mb-2">Zero maintenance</h3>
+            <p className="text-body text-text-secondary">No files to maintain manually.</p>
           </motion.div>
         </div>
       </div>

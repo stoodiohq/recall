@@ -22,7 +22,7 @@ Copy your API token from the dashboard and add Recall to your Claude Code config
   "mcpServers": {
     "recall": {
       "command": "npx",
-      "args": ["-y", "@anthropic/recall-mcp"],
+      "args": ["-y", "recall-mcp-server"],
       "env": {
         "RECALL_API_TOKEN": "your-token-here"
       }
@@ -62,8 +62,8 @@ Use these keywords to load different levels of context:
 | Keyword | What Loads | Token Budget |
 |---------|------------|--------------|
 | (default) | context.md | ~1.5-3K |
-| "remember" | history.md | ~30K |
-| "ultraremember" | sessions/ | Full transcripts |
+| "remember" | context.md + recent sessions | ~10-15K |
+| "ultraremember" | context.md + history.md | ~30K+ |
     `,
   },
   {
@@ -80,11 +80,11 @@ Loads team context (\`context.md\`). Called automatically at session start.
 
 ### recall_get_history
 
-Loads detailed session history (\`history.md\`). Use when you need to remember past decisions.
+Loads context.md + recent sessions (last 10). Use when you need more context about recent work. Triggered by "remember" hotword.
 
 ### recall_get_transcripts
 
-Loads full session transcripts from \`sessions/\` folder. Use sparingly - high token usage.
+Loads context.md + history.md (the full encyclopedia). Use when onboarding or need complete historical context. High token usage.
 
 ### recall_save_session
 
@@ -108,6 +108,14 @@ Quick way to log a single decision during coding.
 ### recall_auth
 
 Authenticate with your Recall API token. Usually not needed if token is in env.
+
+### recall_status
+
+Check your Recall connection status, team info, and repo memory status.
+
+### recall_init
+
+Initialize Recall for the current repository. Creates \`.recall/\` folder and imports any existing session transcripts.
     `,
   },
   {
